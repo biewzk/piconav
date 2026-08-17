@@ -17,8 +17,8 @@ WARNINGS        := -Wall -Wshadow -Wundef -Wmissing-prototypes -Wno-discarded-qu
                     -Wno-missing-field-initializers -Wtype-limits -Wsizeof-pointer-memaccess -Wno-format-nonliteral -Wpointer-arith -Wno-cast-qual -Wmissing-prototypes \
                     -Wunreachable-code -Wno-switch-default -Wreturn-type -Wmultichar -Wno-discarded-qualifiers -Wformat-security -Wno-ignored-qualifiers -Wno-sign-compare -std=c99
 # CFLAGS          ?= -O3 -g0 -I$(LVGL_DIR)/ $(WARNINGS)
-CFLAGS          ?= -O3 -g0 -I$(LVGL_DIR)/ $(WARNINGS) -DLV_CONF_INCLUDE_SIMPLE
-LDFLAGS         ?= -lm
+CFLAGS          ?= -O3 -g0 -I$(LVGL_DIR)/ -I$(LVGL_DIR)/$(LVGL_DIR_NAME)/ $(WARNINGS) -DLV_CONF_INCLUDE_SIMPLE
+LDFLAGS         ?= -lm -lpthread
 BIN             = demo
 BUILD_DIR       = ./build
 BUILD_OBJ_DIR   = $(BUILD_DIR)/obj
@@ -28,7 +28,11 @@ prefix          ?= /usr
 bindir          ?= $(prefix)/bin
 
 #Collect the files to compile
-MAINSRC = $(wildcard ./*.c)
+MAINSRC = $(wildcard ./*.c) \
+          $(wildcard App/*.c) \
+          $(wildcard App/Utils/*.c) \
+          $(wildcard App/Pages/*.c) \
+          $(wildcard HAL/*.c)
 
 include $(LVGL_DIR)/lvgl/lvgl.mk
 include $(LVGL_DIR)/lv_drivers/lv_drivers.mk
