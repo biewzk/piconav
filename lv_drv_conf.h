@@ -8,7 +8,7 @@
  */
 
 /* clang-format off */
-#if 0 /*Set it to "1" to enable the content*/
+#if 1 /*Set it to "1" to enable the content*/
 
 #ifndef LV_DRV_CONF_H
 #define LV_DRV_CONF_H
@@ -316,7 +316,7 @@
  *  Linux frame buffer device (/dev/fbx)
  *-----------------------------------------*/
 #ifndef USE_FBDEV
-#  define USE_FBDEV           0
+#  define USE_FBDEV           1
 #endif
 
 #if USE_FBDEV
