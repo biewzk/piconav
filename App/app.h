@@ -7,13 +7,19 @@
 extern "C" {
 #endif
 
-/* 全局消息中心 (由 app_init 创建) */
+/* Global message center, created by app_init(). */
 msg_center_t *app_msg_center(void);
 
-/* 初始化框架: 消息中心 + 页面管理器 + HAL */
+/*
+ * Initialize the application framework: message center,
+ * page manager and HAL (called from the platform main).
+ */
 void app_init(void);
 
-/* 主循环 (由平台 main 调用) */
+/*
+ * Application main loop: poll keys, dispatch events and
+ * run the LVGL timer handler until hal_should_quit() is true.
+ */
 void app_run(void);
 
 #ifdef __cplusplus

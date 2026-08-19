@@ -1,16 +1,24 @@
 #include "app.h"
 #include "Utils/page_manager.h"
 #include "Utils/log.h"
-#include "Pages/page_startup.h"
+#include "Pages/page_livemap.h"
 #include "../HAL/hal.h"
 
 static msg_center_t *s_mc;
 
+/* Return the global message center created by app_init(). */
 msg_center_t *app_msg_center(void)
 {
     return s_mc;
 }
 
+/*
+ * Initialize the application framework:
+ *  1. create the message center
+ *  2. init the page manager (subscribes to MSG_KEY)
+ *  3. init the HAL keys
+ *  4. push the livemap page as the root page
+ */
 void app_init(void)
 {
     s_mc = msg_center_create();
@@ -21,13 +29,15 @@ void app_init(void)
 
     if (hal_key_init() != 0)
         LOG_W("hal_key_init failed, keys unavailable");
-    if (hal_gps_init() != 0)
-        LOG_W("hal_gps_init failed, GPS unavailable");
 
-    page_manager_push(&page_startup);
-    LOG_I("pushed startup page (depth=%d)", page_manager_depth());
+    page_manager_push(&page_livemap);
+    LOG_I("pushed livemap page (depth=%d)", page_manager_depth());
 }
 
+/*
+ * Main loop: drain key events into the message center, run the
+ * LVGL timer handler and sleep briefly, until hal_should_quit().
+ */
 void app_run(void)
 {
     while (!hal_should_quit()) {
@@ -35,13 +45,6 @@ void app_run(void)
         while (hal_key_read(&ev)) {
             LOG_D("key event: id=%d press=%d", ev.id, ev.is_press);
             msg_center_publish(s_mc, MSG_KEY, &ev);
-        }
-
-        gps_data_t g;
-        if (hal_gps_read(&g)) {
-            LOG_D("gps update: fix=%d lat=%.5f lon=%.5f speed=%.1f km/h",
-                  g.fix, g.lat, g.lon, g.speed_kmh);
-            msg_center_publish(s_mc, MSG_GPS, &g);
         }
 
         lv_timer_handler();

@@ -14,6 +14,7 @@ typedef struct {
     int       sel;
 } settings_priv_t;
 
+/* Repaint the selected item highlight. */
 static void settings_paint(settings_priv_t *d)
 {
     for (int i = 0; i < SETTINGS_NUM; i++) {
@@ -24,6 +25,9 @@ static void settings_paint(settings_priv_t *d)
     }
 }
 
+/*
+ * Build the settings page: title, selectable item list and hint.
+ */
 static void settings_create(page_t *self)
 {
     settings_priv_t *d = calloc(1, sizeof(*d));
@@ -59,12 +63,19 @@ static void settings_create(page_t *self)
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -12);
 }
 
+/*
+ * Free the private data allocated in settings_create().
+ */
 static void settings_destroy(page_t *self)
 {
     free(self->user);
     self->user = NULL;
 }
 
+/*
+ * Key handling: UP/DOWN moves the selection, LEFT pops the page,
+ * ENTER is a placeholder for future settings handlers.
+ */
 static void settings_on_key(page_t *self, const key_event_t *ev)
 {
     if (!ev->is_press)
@@ -84,7 +95,7 @@ static void settings_on_key(page_t *self, const key_event_t *ev)
         page_manager_pop();
         break;
     case KEY_BTN_ENTER:
-        /* 占位: 后续挂接设置项处理 */
+        /* Placeholder: hook up setting item handlers later. */
         break;
     default:
         break;

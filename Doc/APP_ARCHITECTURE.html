@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App 框架框图</title>
+<style>
+body { background:#0f0f1a; color:#eee; font-family:Segoe UI,Roboto,sans-serif;
+       margin:0; padding:24px; line-height:1.6; }
+.wrap { max-width:1000px; margin:0 auto; }
+h1 { color:#00c2ff; border-bottom:1px solid #2a2a40; padding-bottom:8px; }
+h2 { color:#00c2ff; margin-top:32px; }
+blockquote { border-left:3px solid #00c2ff; margin:12px 0; padding:8px 16px;
+             background:#1a1a2e; border-radius:0 6px 6px 0; color:#ccc; }
+pre { background:#1a1a2e; border:1px solid #2a2a40; padding:12px; border-radius:6px;
+      overflow-x:auto; }
+code { font-family:Consolas,Menlo,monospace; font-size:0.92em; }
+pre code { color:#7ee787; }
+.mermaid { background:#1a1a2e; border:1px solid #2a2a40; border-radius:8px;
+           padding:16px; margin:16px 0; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>App 框架框图 (Block Diagram)</h1>
+
+<div class="mermaid">
+flowchart TB
+    subgraph PLATFORM[&quot;平台入口&quot;]
+        MAIN[&quot;main.c (真机)&lt;br/&gt;LVGL + fbdev (/dev/fb0)&lt;br/&gt;custom_tick_get&quot;]
+        SIM[&quot;main_sim.c (模拟器)&lt;br/&gt;LVGL + SDL2 窗口 480x640&lt;br/&gt;custom_tick_get&quot;]
+    end
+
+    subgraph APP[&quot;应用层 App/&quot;]
+        APPINIT[&quot;app.c&lt;br/&gt;app_init(): 组装框架&lt;br/&gt;app_run(): 主循环&quot;]
+        MC[&quot;Utils/msg_center&lt;br/&gt;消息总线&lt;br/&gt;topic 表 + 订阅者链表&quot;]
+        PM[&quot;Utils/page_manager&lt;br/&gt;页面栈(PAGE_STACK_MAX=8)&lt;br/&gt;生命周期 + LVGL 转场&quot;]
+        subgraph PAGES[&quot;Pages/ 页面&quot;]
+            PS[&quot;page_startup&lt;br/&gt;开机页&quot;]
+            PD[&quot;page_dialplate&lt;br/&gt;表盘页&quot;]
+            PL[&quot;page_livemap&lt;br/&gt;离线地图页(Mapsforge)&lt;br/&gt;根页面&quot;]
+            PSE[&quot;page_settings&lt;br/&gt;设置页&quot;]
+        end
+        CFG[&quot;Config/app_config.h&lt;br/&gt;分辨率/动画时长/字号&quot;]
+    end
+
+    subgraph MF[&quot;地图引擎 Mapsforge/&quot;]
+        MFM[&quot;mf_map.c&lt;br/&gt;.map 解析 + 帧查询&quot;]
+        MFR[&quot;mf_render.c&lt;br/&gt;投影/填充/道路/海岸线/标注&quot;]
+        MFT[&quot;mf_theme.c&lt;br/&gt;OSM 标签 -&gt; 样式&quot;]
+    end
+
+    subgraph HAL[&quot;硬件抽象层 (hal.h 接口)&quot;]
+        HK[&quot;hal_keys_evdev.c&lt;br/&gt;真机按键 /dev/input&quot;]
+        SK[&quot;hal_keys_sdl.c&lt;br/&gt;模拟按键 WASD/方向键/滚轮&quot;]
+    end
+
+    subgraph LVGL[&quot;LVGL v8.1.0&quot;]
+        TIMER[&quot;lv_timer_handler()&quot;]
+        SCRLOAD[&quot;lv_scr_load_anim()&lt;br/&gt;屏幕切换&quot;]
+        DISP[&quot;lv_disp 240x320&quot;]
+    end
+
+    MAIN --&gt; APPINIT
+    SIM --&gt; APPINIT
+    APPINIT --&gt; MC
+    APPINIT --&gt; PM
+    APPINIT --&gt; HK
+    APPINIT --&gt; SK
+    PM --&gt; PAGES
+    PL --&gt; MFM
+    PL --&gt; MFR
+    MFR --&gt; MFT
+    PAGES --&gt; CFG
+    PM --&gt; MC
+    PM --&gt; DISP
+
+    TIMER --&gt; DISP
+    SCRLOAD --&gt; DISP
+
+    classDef layer fill:#1a1a2e,stroke:#00c2ff,color:#fff
+    class MAIN,SIM,HK,SK layer
+    classDef core fill:#0f0f1a,stroke:#00c2ff,color:#eee
+    class APPINIT,MC,PM,MFR core
+</div>
+
+<blockquote>说明：</blockquote>
+<blockquote>- 真机与模拟器通过 **HAL 接口**（`hal.h`）隔离，由各 Makefile 选择编译不同实现，App 层代码完全复用。HAL 当前只抽象按键（`hal_key_init/read`）与时间（`hal_delay_ms/tick_get`），GPS 尚未接入。</blockquote>
+<blockquote>- **消息总线**（msg_center）负责按键事件分发（当前仅 `MSG_KEY` 一个主题）；**页面管理器**（page_manager）负责页面栈与转场。</blockquote>
+<blockquote>- **地图引擎**（Mapsforge/）为自包含库：`mf_map` 解析 `.map` 文件并按视口 bbox 查询帧对象，`mf_theme` 将 OSM 标签映射为样式，`mf_render` 执行多遍绘制（海/陆、绿地、建筑、道路两遍、海岸线洪泛、标注）。`page_livemap` 是当前应用的根页面，直接消费地图引擎输出。</blockquote>
+<blockquote>- 页面私有 UI 数据放在 `page_t.user`，由 `create/destroy` 管理，与页面栈生命周期绑定。</blockquote>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:'dark'});</script>
+</body>
+</html>

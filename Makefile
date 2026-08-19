@@ -32,7 +32,8 @@ MAINSRC = $(wildcard ./*.c) \
           $(wildcard App/*.c) \
           $(wildcard App/Utils/*.c) \
           $(wildcard App/Pages/*.c) \
-          $(wildcard HAL/*.c)
+          $(wildcard HAL/*.c) \
+          $(wildcard Mapsforge/*.c)
 
 include $(LVGL_DIR)/lvgl/lvgl.mk
 include $(LVGL_DIR)/lv_drivers/lv_drivers.mk

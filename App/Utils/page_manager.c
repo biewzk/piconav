@@ -8,6 +8,7 @@ static page_t *s_stack[PAGE_STACK_MAX];
 static int s_depth;
 static msg_sub_t *s_key_sub;
 
+/* Dispatch MSG_KEY events to the top page's on_key handler. */
 static void page_key_handler(msg_topic_t topic, const void *data, void *user)
 {
     (void)topic;
@@ -20,6 +21,10 @@ static void page_key_handler(msg_topic_t topic, const void *data, void *user)
         top->ops->on_key(top, ev);
 }
 
+/*
+ * Initialize the page manager: store the message center and subscribe
+ * to MSG_KEY so key events are dispatched to the top page.
+ */
 void page_manager_init(msg_center_t *mc)
 {
     s_mc = mc;
@@ -28,17 +33,18 @@ void page_manager_init(msg_center_t *mc)
     s_key_sub = msg_center_subscribe(mc, MSG_KEY, page_key_handler, NULL);
 }
 
-/* 生成屏幕, 构建 UI */
+/* Create the page's screen (once) and run its create callback. */
 static void page_build(page_t *page)
 {
     if (page->scr)
         return;
-    page->scr = lv_obj_create(NULL);   /* NULL parent => 屏幕 */
+    page->scr = lv_obj_create(NULL);   /* NULL parent => screen */
     lv_obj_clear_flag(page->scr, LV_OBJ_FLAG_SCROLLABLE);
     if (page->ops->create)
         page->ops->create(page);
 }
 
+/* Run the page's teardown callbacks and delete its screen. */
 static void page_unload(page_t *page)
 {
     if (page->ops->on_hide)
@@ -51,6 +57,10 @@ static void page_unload(page_t *page)
     }
 }
 
+/*
+ * Push a page onto the stack: build it, hide the old page, show the
+ * new one and run the slide-in transition.
+ */
 void page_manager_push(page_t *page)
 {
     if (s_depth >= PAGE_STACK_MAX) {
@@ -75,6 +85,9 @@ void page_manager_push(page_t *page)
         lv_scr_load_anim(page->scr, LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, false);
 }
 
+/*
+ * Replace the top page in place: same depth, fade-in transition.
+ */
 void page_manager_replace(page_t *page)
 {
     if (s_depth == 0) {
@@ -98,6 +111,10 @@ void page_manager_replace(page_t *page)
     old->scr = NULL;
 }
 
+/*
+ * Pop the top page: hide it, show the new top and run the
+ * slide-back transition.
+ */
 void page_manager_pop(void)
 {
     if (s_depth <= 1)
@@ -119,11 +136,13 @@ void page_manager_pop(void)
     old->scr = NULL;
 }
 
+/* Return the current (top) page, or NULL if the stack is empty. */
 page_t *page_manager_top(void)
 {
     return s_depth > 0 ? s_stack[s_depth - 1] : NULL;
 }
 
+/* Return the current page stack depth. */
 int page_manager_depth(void)
 {
     return s_depth;

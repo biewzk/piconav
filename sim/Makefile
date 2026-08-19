@@ -1,9 +1,9 @@
 #
-# 模拟器 Makefile (PC 主机编译 + SDL2)
-# 用法: make           # 编译
-#       make clean
-# 产物: build_sim/bin/pico_nav_sim
-# 运行: ./build_sim/bin/pico_nav_sim [sample.nmea]
+# Simulator Makefile (PC host compile + SDL2)
+# Usage: make            # build
+#        make clean
+# Output: build_sim/bin/pico_nav_sim
+# Run:    ./build_sim/bin/pico_nav_sim
 #
 CC           = gcc
 LVGL_DIR     = ..
@@ -21,13 +21,13 @@ BUILD_DIR  = ./build_sim
 OBJ_DIR    = $(BUILD_DIR)/obj
 BIN_DIR    = $(BUILD_DIR)/bin
 
-# 模拟器源码: 应用框架 + 模拟 HAL + SDL 入口
+# Simulator sources: app framework + sim HAL + SDL entry
 MAINSRC = main_sim.c \
           hal_keys_sdl.c \
-          hal_gps_nmea.c \
           $(wildcard ../App/*.c) \
           $(wildcard ../App/Utils/*.c) \
-          $(wildcard ../App/Pages/*.c)
+          $(wildcard ../App/Pages/*.c) \
+          $(wildcard ../Mapsforge/*.c)
 
 include $(LVGL_DIR)/lvgl/lvgl.mk
 
@@ -54,8 +54,8 @@ default: $(TARGET)
 	@mkdir -p $(BIN_DIR)
 	$(CC) -o $(BIN_DIR)/$(BIN) $(TARGET) $(LDFLAGS)
 	@echo ""
-	@echo "编译完成: $(BIN_DIR)/$(BIN)"
-	@echo "运行: cd sim && ./build_sim/bin/pico_nav_sim [sample.nmea]"
+	@echo "Build done: $(BIN_DIR)/$(BIN)"
+	@echo "Run: cd sim && ./build_sim/bin/pico_nav_sim"
 
 clean:
 	rm -rf $(BUILD_DIR)

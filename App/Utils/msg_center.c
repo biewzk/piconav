@@ -12,12 +12,16 @@ struct msg_center {
     msg_sub_t *topics[MSG_COUNT];
 };
 
+/* Create a message center with an empty topic table. */
 msg_center_t *msg_center_create(void)
 {
     msg_center_t *mc = calloc(1, sizeof(*mc));
     return mc;
 }
 
+/*
+ * Publish an event on a topic: call every subscribed handler in order.
+ */
 void msg_center_publish(msg_center_t *mc, msg_topic_t topic, const void *data)
 {
     if (!mc || topic >= MSG_COUNT)
@@ -29,6 +33,9 @@ void msg_center_publish(msg_center_t *mc, msg_topic_t topic, const void *data)
     }
 }
 
+/*
+ * Subscribe a handler to a topic; node is prepended to the list.
+ */
 msg_sub_t *msg_center_subscribe(msg_center_t *mc, msg_topic_t topic,
                                 msg_handler_t handler, void *user)
 {
@@ -46,6 +53,7 @@ msg_sub_t *msg_center_subscribe(msg_center_t *mc, msg_topic_t topic,
     return sub;
 }
 
+/* Unlink and free a subscription node from the topic's list. */
 void msg_center_unsubscribe(msg_center_t *mc, msg_topic_t topic, msg_sub_t *sub)
 {
     if (!mc || topic >= MSG_COUNT || !sub)
@@ -62,6 +70,7 @@ void msg_center_unsubscribe(msg_center_t *mc, msg_topic_t topic, msg_sub_t *sub)
     }
 }
 
+/* Destroy the center: free all subscriptions and the center itself. */
 void msg_center_destroy(msg_center_t *mc)
 {
     if (!mc)

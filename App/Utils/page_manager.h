@@ -14,9 +14,9 @@ extern "C" {
 typedef struct page page_t;
 
 typedef struct {
-    void (*create)(page_t *self);          /* 构建 UI (self->scr) */
+    void (*create)(page_t *self);          /* Build the UI (self->scr) */
     void (*destroy)(page_t *self);
-    void (*on_show)(page_t *self);         /* 成为当前页 */
+    void (*on_show)(page_t *self);         /* Page becomes current */
     void (*on_hide)(page_t *self);
     void (*on_key)(page_t *self, const key_event_t *ev);
 } page_ops_t;
@@ -24,26 +24,26 @@ typedef struct {
 struct page {
     const char     *name;
     const page_ops_t *ops;
-    lv_obj_t       *scr;   /* 本页全屏容器 (lv_obj_create(NULL) 生成屏幕) */
-    void           *user;  /* 页面私有数据 */
+    lv_obj_t       *scr;   /* Full-screen container (lv_obj_create(NULL) screen) */
+    void           *user;  /* Page private data */
 };
 
-/* 页面管理器 (页面栈 + 生命周期 + 转场) */
+/* Page manager (page stack + lifecycle + transitions). */
 void page_manager_init(msg_center_t *mc);
 
-/* 压入新页面 (带转场动画) */
+/* Push a new page (with transition animation). */
 void page_manager_push(page_t *page);
 
-/* 弹出当前页面, 回到上一个 (带反向转场) */
+/* Pop the current page back to the previous one (reverse transition). */
 void page_manager_pop(void);
 
-/* 用新页面替换栈顶 (不增加深度, 如 Startup -> Dialplate) */
+/* Replace the top page without changing depth (e.g. Startup -> Dialplate). */
 void page_manager_replace(page_t *page);
 
-/* 当前页面 */
+/* Current (top) page */
 page_t *page_manager_top(void);
 
-/* 栈深度 */
+/* Stack depth */
 int page_manager_depth(void);
 
 #ifdef __cplusplus

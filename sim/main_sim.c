@@ -12,7 +12,7 @@
 #include "../App/Utils/page_manager.h"
 #include "../HAL/hal.h"
 
-#define SIM_SCALE 2   /* 240x320 -> 480x640 窗口 */
+#define SIM_SCALE 2   /* 240x320 -> 480x640 window */
 #define SIM_HOR    240
 #define SIM_VER    320
 
@@ -20,7 +20,7 @@ static SDL_Window   *s_win;
 static SDL_Renderer *s_renderer;
 static SDL_Texture  *s_tex;
 static int s_quit;
-static uint32_t s_autoquit_ms;   /* 0=关闭; 否则到达时长自动退出 (无头测试用) */
+static uint32_t s_autoquit_ms;   /* 0 = off; else auto-exit after this many ms (headless test) */
 static uint32_t s_start_ms;
 
 void sim_set_quit(int q) { s_quit = q; }
@@ -35,8 +35,9 @@ int hal_should_quit(void)
     return 0;
 }
 
-/* 无头测试: 注入一次按键 (走 hal_key_read -> 总线分发, 与真机同路径)
- * SIM_KEY="right" 或 "left/up/down/enter/back" */
+/* Headless test: inject one key event (goes through hal_key_read ->
+ * bus dispatch, same path as on-device).
+ * SIM_KEY="right" or "left/up/down/enter/back". */
 static void sim_inject_key(const char *name)
 {
     SDL_Event ev = {0};
@@ -59,7 +60,8 @@ static void sim_inject_key(const char *name)
     LOG_I("sim: injected key '%s'", name);
 }
 
-/* 无头测试: 自动退出前把帧缓冲 dump 为 PPM, 便于检查渲染结果 */
+/* Headless test: dump the framebuffer to PPM before auto-exit,
+ * for checking render output. */
 static void sim_dump_ppm(lv_disp_t *disp, const char *path)
 {
     if (!disp || !disp->driver->draw_buf)
@@ -88,6 +90,7 @@ static void sim_dump_ppm(lv_disp_t *disp, const char *path)
     fprintf(stderr, "sim: dumped %s\n", path);
 }
 
+/* LVGL flush callback: blit the dirty area to the SDL texture. */
 static void sim_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p)
 {
     int w = area->x2 - area->x1 + 1;
@@ -103,6 +106,11 @@ static void sim_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *
     lv_disp_flush_ready(drv);
 }
 
+/*
+ * Simulator entry point: setup SDL + LVGL, run app_init/app_run,
+ * optionally inject keys (SIM_KEY) and dump the frame (SIM_DUMP_PPM)
+ * for headless testing. SDL window close sets the quit flag.
+ */
 int main(int argc, char *argv[])
 {
     if (argc > 1)
@@ -154,8 +162,12 @@ int main(int argc, char *argv[])
         buf[sizeof(buf) - 1] = 0;
         char *tok = strtok(buf, ",");
         uint32_t base = SDL_GetTicks();
+        uint32_t interval_ms = 400;
+        const char *iv = getenv("SIM_KEY_MS");
+        if (iv)
+            interval_ms = (uint32_t)strtoul(iv, NULL, 10);
         while (tok) {
-            while ((int)(SDL_GetTicks() - base) < 400)
+            while ((int)(SDL_GetTicks() - base) < (int)interval_ms)
                 SDL_Delay(10);
             sim_inject_key(tok);
             base = SDL_GetTicks();
@@ -178,7 +190,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-/* LV_TICK_CUSTOM_SYS_TIME_EXPR */
+/* LV_TICK_CUSTOM_SYS_TIME_EXPR: LVGL tick source. */
 uint32_t custom_tick_get(void)
 {
     return hal_tick_get();

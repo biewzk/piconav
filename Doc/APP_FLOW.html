@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App 运行流程图</title>
+<style>
+body { background:#0f0f1a; color:#eee; font-family:Segoe UI,Roboto,sans-serif;
+       margin:0; padding:24px; line-height:1.6; }
+.wrap { max-width:1000px; margin:0 auto; }
+h1 { color:#00c2ff; border-bottom:1px solid #2a2a40; padding-bottom:8px; }
+h2 { color:#00c2ff; margin-top:32px; }
+blockquote { border-left:3px solid #00c2ff; margin:12px 0; padding:8px 16px;
+             background:#1a1a2e; border-radius:0 6px 6px 0; color:#ccc; }
+pre { background:#1a1a2e; border:1px solid #2a2a40; padding:12px; border-radius:6px;
+      overflow-x:auto; }
+code { font-family:Consolas,Menlo,monospace; font-size:0.92em; }
+pre code { color:#7ee787; }
+.mermaid { background:#1a1a2e; border:1px solid #2a2a40; border-radius:8px;
+           padding:16px; margin:16px 0; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>App 运行流程图 (Flowchart)</h1>
+
+<h2>1. 主循环 app_run()</h2>
+
+<div class="mermaid">
+flowchart TB
+    S([程序启动]) --&gt; INIT[&quot;app_init()&lt;br/&gt;创建 msg_center&lt;br/&gt;page_manager_init(订阅 MSG_KEY)&lt;br/&gt;hal_key_init()&lt;br/&gt;push page_livemap (根页面)&quot;]
+    INIT --&gt; LOOP{&quot;app_run() 主循环&lt;br/&gt;while !hal_should_quit&quot;}
+
+    LOOP --&gt; KEY[&quot;hal_key_read()&lt;br/&gt;读按键事件&quot;]
+    KEY -- &quot;有事件&quot; --&gt; PUBK[&quot;msg_center_publish(MSG_KEY)&quot;]
+    PUBK --&gt; DISPATCH[&quot;page_manager 订阅者&lt;br/&gt;分发到栈顶页 on_key&quot;]
+    DISPATCH --&gt; HANDLE[&quot;栈顶页 on_key 处理&lt;br/&gt;(平移/缩放/跳转)&quot;]
+    HANDLE --&gt; TIMER
+    KEY -- &quot;无事件&quot; --&gt; TIMER
+
+    TIMER[&quot;lv_timer_handler()&lt;br/&gt;刷新界面&quot;]
+    TIMER --&gt; DELAY[&quot;hal_delay_ms(5)&quot;]
+    DELAY --&gt; LOOP
+
+    LOOP -- &quot;hal_should_quit()=1&lt;br/&gt;(模拟器关窗口/autoquit)&quot; --&gt; E([退出])
+</div>
+
+<blockquote>注：当前 HAL 未接入 GPS，主循环只轮询按键，无 GPS 读取/发布。</blockquote>
+
+<h2>2. 页面导航 (当前: 地图开发模式)</h2>
+
+<blockquote>当前 `app_init()` 直接压入 `page_livemap` 作为**根页面**。表盘/开机/设置页仍在代码中，可经 `page_manager` 恢复，但当前入口不经过它们。</blockquote>
+
+<div class="mermaid">
+flowchart TB
+    START([app_init]) --&gt; ROOT[&quot;page_manager_push(&amp;page_livemap)&lt;br/&gt;根页面: 离线地图&quot;]
+
+    subgraph LIVE[&quot;page_livemap (当前可见)&quot;]
+        L1[&quot;UP/DOWN/LEFT/RIGHT -&gt; 平移 32px&lt;br/&gt;(按住 70ms 重复 24px 连续平移)&quot;]
+        L2[&quot;ENTER -&gt; 放大一级&quot;]
+        L3[&quot;BACK -&gt; 缩小一级&quot;]
+    end
+    ROOT --&gt; LIVE
+
+    subgraph DORMANT[&quot;其余页面 (代码已实现, 当前不作为入口)&quot;]
+        D1[&quot;page_startup: 任意键 -&gt; replace page_dialplate&quot;]
+        D2[&quot;page_dialplate: Enter -&gt; push settings&lt;br/&gt;Left/Right -&gt; push livemap&quot;]
+        D3[&quot;page_settings: Up/Down 选择&lt;br/&gt;Left -&gt; pop 返回 dialplate&lt;br/&gt;Enter 占位&quot;]
+    end
+    START -. 可恢复 .-&gt; DORMANT
+</div>
+
+<h2>3. 页面生命周期 (page_manager)</h2>
+
+<div class="mermaid">
+sequenceDiagram
+    participant PM as page_manager
+    participant P as page_t
+    participant LV as LVGL
+
+    Note over PM,LV: page_manager_push(page)
+    PM-&gt;&gt;P: page_build(): 首次则 lv_obj_create + ops-&gt;create
+    PM-&gt;&gt;P: 旧页 ops-&gt;on_hide (退出前台)
+    PM-&gt;&gt;P: 新页 ops-&gt;on_show (订阅消息, 刷新)
+    PM-&gt;&gt;LV: lv_scr_load_anim(新页, MOVE_LEFT)
+    Note over PM,LV: 栈顶 = 新页, 接收 MSG_KEY
+
+    Note over PM,LV: page_manager_pop()
+    PM-&gt;&gt;P: 旧页 ops-&gt;on_hide
+    PM-&gt;&gt;P: 新栈顶 ops-&gt;on_show
+    PM-&gt;&gt;LV: lv_scr_load_anim(上一页, MOVE_RIGHT)
+    PM-&gt;&gt;P: 旧页 ops-&gt;destroy + lv_obj_del
+
+    Note over PM,LV: page_manager_replace(page)
+    PM-&gt;&gt;P: 旧页 ops-&gt;on_hide
+    PM-&gt;&gt;P: 新页 ops-&gt;on_show
+    PM-&gt;&gt;LV: lv_scr_load_anim(新页, FADE_ON)
+    PM-&gt;&gt;P: 旧页 ops-&gt;destroy (深度不变)
+</div>
+
+<h2>4. 消息发布/订阅时序</h2>
+
+<div class="mermaid">
+sequenceDiagram
+    participant APP as &quot;app_run()&quot;
+    participant MC as &quot;msg_center&quot;
+    participant PM as &quot;page_manager (订阅 MSG_KEY)&quot;
+
+    APP-&gt;&gt;MC: publish(MSG_KEY, key_event)
+    MC-&gt;&gt;PM: 回调 page_key_handler
+    PM-&gt;&gt;PM: 取栈顶页 -&gt; on_key(ev)
+    PM-&gt;&gt;PM: 栈顶页处理 (平移/缩放/页面跳转)
+</div>
+
+<blockquote>说明：</blockquote>
+<blockquote>- 按键事件统一经 `MSG_KEY` 总线，由页面管理器在 `page_manager_init` 时订阅，回调中取**栈顶页**调用其 `on_key`；各页只需实现 `on_key`。</blockquote>
+<blockquote>- 页面切换用 LVGL 转场：push 左移进入 (MOVE_LEFT)，pop 右移返回 (MOVE_RIGHT)，replace 淡入 (FADE_ON)，时长 250ms（`PAGE_ANIM_TIME`）。</blockquote>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true, theme:'dark'});</script>
+</body>
+</html>

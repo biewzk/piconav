@@ -4,44 +4,57 @@ Pico Nav 里程表界面程序。基于 LVGL v8.1.0，采用自研的「页面�
 
 ## 目录结构
 
+> 以下结构取自 `tree -a --dirsfirst`（目录优先、按名排序），`build/` 与 `sim/build_sim/` 为编译产物、`lvgl/`/`lv_drivers/` 为第三方源码，均折叠展示。
+
 ```
 pico_nav/
-├── main.c                  # 真机入口: LVGL + fbdev 初始化, 调用 app_init/app_run
-├── lv_conf.h               # LVGL 配置 (16bit RGB565, LV_TICK_CUSTOM)
-├── lv_drv_conf.h           # 显示驱动配置 (FBDEV_PATH=/dev/fb0, USE_EVDEV=0)
-├── lvgl/                   # LVGL 源码 (v8.1.0)
-├── lv_drivers/             # fbdev 等显示/输入驱动
-├── lv_demos/               # LVGL 官方 demo (当前未使用)
 ├── App/                    # 应用框架与页面
-│   ├── app.h / app.c       # 全局消息中心 + app_init/app_run 主循环
 │   ├── Config/
 │   │   └── app_config.h    # 应用配置 (分辨率/动画时长/字号)
+│   ├── Pages/
+│   │   ├── page_dialplate.c / page_dialplate.h   # 表盘页 (速度大字 + 距离/时间卡)
+│   │   ├── page_livemap.c / page_livemap.h       # 离线地图页 (Mapsforge 渲染 + 缩放/平移)
+│   │   ├── page_settings.c / page_settings.h     # 设置页 (占位)
+│   │   └── page_startup.c / page_startup.h       # 开机页 (logo, 任意键进入表盘)
 │   ├── Utils/
-│   │   ├── log.h / log.c           # 日志系统 (syslog + stderr 镜像)
-│   │   ├── msg_center.h/.c     # 发布订阅消息总线 (topic 表 + 订阅者链表)
-│   │   └── page_manager.h/.c   # 页面管理器 (页面栈 + 生命周期 + 转场)
-│   └── Pages/
-│       ├── page_startup.h/.c   # 开机页 (logo, 任意键进入表盘)
-│       ├── page_dialplate.h/.c # 表盘页 (速度大字 + 距离/时间卡)
-│       ├── page_livemap.h/.c   # 实时地图页 (占位)
-│       └── page_settings.h/.c  # 设置页 (占位)
+│   │   ├── log.c / log.h               # 日志系统 (syslog + stderr 镜像)
+│   │   ├── msg_center.c / msg_center.h # 发布订阅消息总线 (topic 表 + 订阅者链表)
+│   │   └── page_manager.c / page_manager.h # 页面管理器 (页面栈 + 生命周期 + 转场)
+│   ├── app.c                # 应用入口: 组装框架 + app_init/app_run 主循环
+│   └── app.h
+├── build/                  # 真机编译产物 (bin/demo)
+├── Doc/                    # 设计文档 (Markdown + HTML)
+│   ├── APP_ARCHITECTURE.md / .html   # App 框架框图 (Mermaid)
+│   └── APP_FLOW.md / .html           # App 运行流程图 (Mermaid)
 ├── HAL/                    # 硬件抽象层 (真机实现)
-│   ├── hal.h               # 接口定义: 按键/时间/GPS/退出
-│   ├── hal_keys_evdev.c    # 真机按键: 扫描 /dev/input/event*
-│   └── hal_gps_stub.c      # 真机 GPS: 占位 (Phase 3 接入)
+│   ├── hal.h               # 接口定义: 按键/时间/退出
+│   └── hal_keys_evdev.c    # 真机按键: 扫描 /dev/input/event*
+├── lv_drivers/             # LVGL 显示/输入驱动 (fbdev 等)
+├── lvgl/                   # LVGL 源码 (v8.1.0)
+├── Mapsforge/              # Mapsforge 离线地图引擎
+│   ├── mf_map.c / mf_map.h     #   地图文件解析 (头部/标签表/瓦片索引/块解码 + 帧查询)
+│   ├── mf_render.c / mf_render.h # 渲染器 (视口投影/多边形填充/道路两遍绘制/海岸线洪泛/标注)
+│   └── mf_theme.c / mf_theme.h #   渲染主题 (OSM 标签 -> 样式: 颜色/线宽/等级/标注)
+├── resources/              # 离线地图数据 (.map v5)
+│   ├── macau.map
+│   ├── monaco.map
+│   └── ningxia.map
 ├── sim/                    # PC 模拟器 (SDL2)
-│   ├── main_sim.c / main_sim.h  # SDL 窗口 + LVGL 渲染 + PPM 无头测试
-│   ├── hal_keys_sdl.c      # 模拟按键: WASD/方向键/Enter/Space/Esc
-│   ├── hal_gps_nmea.c      # 模拟 GPS: NMEA 文件回放
-│   ├── sample.nmea         # 示例 NMEA 数据 (GPRMC, 10 条)
-│   ├── Makefile            # host 编译规则
+│   ├── build_sim/          # 模拟器编译产物 (bin/pico_nav_sim)
 │   ├── build_sim.sh        # 模拟器一键编译/运行
-│   └── build_sim/          # 模拟器编译产物 (bin/pico_nav_sim)
-├── Makefile                # 真机交叉编译规则
+│   ├── hal_keys_sdl.c      # 模拟按键: WASD/方向键/Enter/Space/Esc + 鼠标滚轮/左键拖动
+│   ├── main_sim.c / main_sim.h # SDL 窗口 + LVGL 渲染 + NMEA 回放 + 无头测试
+│   ├── Makefile            # host 编译规则
+│   └── sample.nmea         # 示例 NMEA 数据 (GPRMC, 10 条)
+├── .vscode/
+│   └── settings.json       # VS Code 工程配置
 ├── build.sh                # 真机一键编译 (推荐)
-├── APP_ARCHITECTURE.md     # App 框架框图 (Mermaid)
-├── APP_FLOW.md             # App 运行流程图 (Mermaid)
-└── build/                  # 真机编译产物 (bin/demo)
+├── .gitignore
+├── lv_conf.h               # LVGL 配置 (16bit RGB565, LV_TICK_CUSTOM)
+├── lv_drv_conf.h           # 显示驱动配置 (FBDEV_PATH=/dev/fb0, USE_EVDEV=0)
+├── main.c                  # 真机入口: LVGL + fbdev 初始化, 调用 app_init/app_run
+├── Makefile                # 真机交叉编译规则
+└── README.md
 ```
 
 ## 编译
@@ -94,21 +107,23 @@ cd sim
 ./build_sim/bin/pico_nav_sim [sample.nmea]   # 可选参数指定 NMEA 文件
 ```
 
-窗口 480x640（240x320 放大 2 倍），键盘映射如下：
+窗口 480x640（240x320 放大 2 倍）。所有输入都走同一条 `hal_key_read()` 路径（与真机一致），映射如下：
 
-| 键位 | 动作 |
+| 输入 | 动作 |
 |------|------|
 | `↑` / `w` | KEY_BTN_UP |
 | `↓` / `s` | KEY_BTN_DOWN |
 | `←` / `a` | KEY_BTN_LEFT |
 | `→` / `d` | KEY_BTN_RIGHT |
-| `Enter` / `Space` | KEY_BTN_ENTER |
-| `Esc` | KEY_BTN_BACK |
+| `Enter` / `Space` / `+` | KEY_BTN_ENTER |
+| `Esc` / `-` | KEY_BTN_BACK |
+| 鼠标滚轮 | 上滚 = ENTER（放大），下滚 = BACK（缩小） |
+| 鼠标左键拖动 | 按拖动方向连发方向键（平移地图） |
 | 关闭窗口 | 退出程序 |
 
 #### 无头测试 (CI/自动化)
 
-模拟器支持两个环境变量，方便在无显示器环境下自动验证：
+模拟器支持几个环境变量，方便在无显示器环境下自动验证：
 
 ```bash
 # 运行 1.2 秒后自动退出
@@ -117,11 +132,22 @@ SDL_VIDEODRIVER=dummy SIM_AUTOQUIT_MS=1200 ./build_sim/bin/pico_nav_sim sample.n
 # 退出前把当前帧缓冲 dump 为 PPM 文件 (检查渲染结果)
 SDL_VIDEODRIVER=dummy SIM_AUTOQUIT_MS=1200 \
     SIM_DUMP_PPM=/tmp/sim.ppm ./build_sim/bin/pico_nav_sim sample.nmea
+
+# 回放按键序列 (按 300ms 间隔注入), 验证交互路径
+SIM_KEY="right,right,enter,down,back" SIM_KEY_MS=300 \
+    SDL_VIDEODRIVER=dummy SIM_AUTOQUIT_MS=3000 ./build_sim/bin/pico_nav_sim
+
+# 指定初始地图视口 (配合 MF_MAP 选择地图文件)
+MF_MAP=../resources/macau.map SIM_LAT=22.1935 SIM_LON=113.5451 SIM_ZOOM=14 \
+    SDL_VIDEODRIVER=dummy SIM_AUTOQUIT_MS=1500 SIM_DUMP_PPM=/tmp/map.ppm \
+    ./build_sim/bin/pico_nav_sim
 ```
+
+调试开关：`MF_DEBUG=1`（帧对象/线数日志）、`MF_NOCOAST=1`（禁用海岸线渲染，退回瓦片海/陆模型）。
 
 ## App 应用详解
 
-> 架构框图与运行流程图见：[APP_ARCHITECTURE.md](APP_ARCHITECTURE.md)（分层框图）、[APP_FLOW.md](APP_FLOW.md)（主循环/生命周期/时序图）。
+> 架构框图与运行流程图见：[Doc/APP_ARCHITECTURE.md](Doc/APP_ARCHITECTURE.md)（分层框图）、[Doc/APP_FLOW.md](Doc/APP_FLOW.md)（主循环/生命周期/时序图）。
 
 ### 目录结构
 
@@ -163,7 +189,7 @@ App/
 `App/app.c` 是应用与平台之间的唯一桥梁：
 
 - `app_init()`：依次创建消息中心 → 初始化页面管理器（并订阅 `MSG_KEY`）→ 初始化 HAL（按键/GPS）→ 压入开机页 `page_startup`。
-- `app_run()`：主循环（由平台 `main` 调用），见 [APP_FLOW.md](APP_FLOW.md) 主循环图：
+- `app_run()`：主循环（由平台 `main` 调用），见 [Doc/APP_FLOW.md](Doc/APP_FLOW.md) 主循环图：
   1. `hal_key_read()` 读按键事件，发布到 `MSG_KEY`；
   2. `hal_gps_read()` 读 GPS 数据，发布到 `MSG_GPS`；
   3. `lv_timer_handler()` 驱动 LVGL 刷新；
@@ -293,13 +319,16 @@ while (!hal_should_quit()) {
 
 ## 页面导航
 
+> 当前处于地图开发模式：`app_init()` 直接压入 `page_livemap` 作为根页面（表盘/开机/设置页仍在，可经 `page_manager` 恢复）。地图页按键见上文「page_livemap 离线地图页」。
+
 | 操作 | 跳转 |
 |------|------|
 | Startup 任意键 | replace → Dialplate |
 | Dialplate `Enter` | push → Settings |
 | Dialplate `←/→` | push → LiveMap |
 | Settings `←` | pop → 返回 Dialplate |
-| LiveMap `←/→/Enter` | pop → 返回 Dialplate |
+| LiveMap `方向键` | 平移地图 |
+| LiveMap `Enter` / `Back` | 放大 / 缩小 |
 
 ## 页面详解
 
@@ -327,12 +356,225 @@ while (!hal_should_quit()) {
   - `KEY_BTN_LEFT` / `KEY_BTN_RIGHT` → `push(&page_livemap)`（实时地图）
 - **注意**：`on_key` 只响应按下（`ev->is_press`），避免重复事件触发多次跳转。
 
-### page_livemap 实时地图页
+### page_livemap 离线地图页
 
-- **职责**：Phase 4 地图占位，验证从表盘进入/返回的导航链路。
-- **UI**：背景 `0x12101a` + 标题 "LiveMap" + 居中占位文本 `地图占位 (Phase 4)` + 底部提示 `LEFT/RIGHT: 返回`。
-- **按键**：`KEY_BTN_LEFT` / `KEY_BTN_RIGHT` / `KEY_BTN_ENTER` 任一 → `page_manager_pop()` 返回表盘。
-- **无私有数据**、无消息订阅。
+- **职责**：Mapsforge 离线地图渲染与浏览（当前为应用根页面）。
+- **私有数据** `livemap_priv_t`：
+  ```
+  { mf_map_t map;        // 打开的地图文件 (MF_MAP 环境变量或默认 monaco.map)
+    lv_obj_t *canvas;    // 全屏画布 (RGB565, 静态缓冲)
+    lv_obj_t *info;      // 左上角信息条 (zoom / 对象数 / 渲染耗时)
+    mf_view_t view;      // 视口 (中心点 + zoom)
+    lv_timer_t *pan_timer; key_id_t pan_key; }  // 长按自动平移
+  ```
+- **渲染**：`mf_query()` 取视口 bbox 内对象 → `mf_render()` 绘制（海陆/绿地/建筑/道路两遍/标注）→ 信息条显示 `z14 517 obj 3ms`（含渲染耗时，便于性能评估）。
+- **按键**：
+  - `UP/DOWN/LEFT/RIGHT` → 平移（单击 32px；按住 70ms 自动重复 24px，实现连续平移）
+  - `ENTER` → 放大一级
+  - `BACK` → 缩小一级
+  - 模拟器可用鼠标滚轮缩放、左键拖动平移（同一 HAL 路径）
+- **初始视口**：地图文件起点/边界中心，可用环境变量 `SIM_LAT/SIM_LON/SIM_ZOOM` 覆盖；`MF_MAP` 选择地图文件。
+
+## Mapsforge 离线地图引擎
+
+`Mapsforge/` 是自包含的 Mapsforge 二进制地图（.map v5）解析与渲染库，**不依赖 App 框架**（仅依赖 LVGL 的画布绘制接口与 `mf_map`/`mf_theme`）。整个渲染链路为：**读文件 → 解块 → 帧对象 → 样式解析 → 分遍绘制**。
+
+### 模块职责
+
+| 模块 | 职责 |
+|------|------|
+| `mf_map` | 打开 .map 文件、解析头部/标签表/子文件表；`mf_query()` 按视口 bbox+zoom 定位瓦片、读取索引与数据块、delta 解码出 POI/Way 帧；把索引中的「全水域瓦片」水标志位一并导出 |
+| `mf_theme` | 将每个对象的 OSM 标签解析为样式（组/等级/颜色/线宽/可见 zoom 区间/标注参数）。见「样式分类」 |
+| `mf_render` | 墨卡托投影 → 分遍绘制（海陆/绿地/建筑/道路/标注/POI），含扫描线多边形填充、两遍道路绘制、海岸线洪泛填海、文字光晕与碰撞检测 |
+
+三者通过 `mf_frame_t` 衔接：`mf_map` 填帧（对象数组 + 全水域瓦片表），`mf_render` 消费帧并产出画布像素。
+
+### 数据流
+
+```
+page_livemap (每帧)
+   │ mf_view_bbox()  ── 视口 bbox (微度, 含 8% 边距)
+   ▼
+mf_query(m, zoom, bbox, &frame)      ← mf_map: 解块, 输出对象数组 + water_tiles
+   │
+   ▼
+mf_render(m, &view, &frame, canvas)  ← mf_render + mf_theme: 分遍绘制到 240x320 RGB565
+   │
+   ▼
+lv_canvas 帧缓冲 → 屏幕
+```
+
+---
+
+### mf_map — 地图文件解析
+
+#### 文件头部（`mf_open`）
+
+按 Mapsforge v5 规范顺序解析，全部使用带越界保护的**内存读取器** `mf_reader_t`：
+
+1. **魔数** `"mapsforge binary OSM"`（20 字节）+ 剩余头部大小（4 字节 BE，须 70~2MB）。
+2. **文件版本**（4 字节，须 1~5）、**文件大小**（8 字节，与磁盘大小核对）、**地图日期**（8 字节，跳过）。
+3. **边界框**：4 个 int32（minLat/minLon/maxLat/maxLon，单位微度）→ 存 `bbox_min`/`bbox_max`。
+4. **瓦片尺寸**（2 字节）、**投影名**（字符串，须 `"Mercator"`）。
+5. **标志字节** `flags`：0x80 调试文件、0x40 起始坐标、0x20 起始 zoom、0x10 语言偏好、0x08 注释、0x04 创建者。
+6. **可选字段**：起始经纬度、起始 zoom、语言/注释/创建者字符串（只读丢弃）。
+7. **POI 标签表**与 **Way 标签表**：先 2 字节数量，再逐个读字符串（`"key=value"` 形式），存表供帧对象按 ID 索引。
+8. **子文件表**：1 字节数量，每个子文件读 base_zoom/zoom_min/zoom_max + 起始地址/大小（各 8 字节）。随后计算：
+   - `index_start_addr`（调试文件跳过 16 字节调试头）；
+   - 由地图 bbox 反算**瓦片边界** `boundary_tile_*`、`blocks_width/height`、`num_blocks`、`index_end_addr`（索引每瓦片 5 字节）。
+
+#### 变长整数与可变标签
+
+- **VBE-U**：无符号变长整数，每字节低 7 位、高位为续位（`r_vbe_u`）。
+- **VBE-S**：有符号变长整数，末字节第 6 位为符号位（`r_vbe_s`），最多 10 字节、超限视为损坏（此前修复过 `r_vbe_s` 移位未限界的 UB）。
+- **可变标签**（`r_consume_tag_value`）：标签值形如 `%b/%h/%i/%f/%s` 时按类型消耗对应字节，保证后续字节流对齐。
+
+#### 瓦片索引与块查询（`mf_query` → `parse_block`）
+
+`mf_query` 流程：
+
+1. 取 zoom 对应的子文件（`mf_get_subfile`）；把 bbox 经纬度转成**该子文件 base_zoom 下的瓦片行列**范围，裁剪到子文件瓦片边界。
+2. 逐块读 5 字节索引条目：
+   - 高 1 位（`MF_INDEX_WATER_BIT`）为**全水域瓦片**标志 → 收集进 `frame->water_tiles`（带去重）。
+   - 低 39 位为块偏移；块大小 = 下一块偏移 − 当前偏移（末块到子文件末尾）。
+3. 读整块到内存 → `parse_block` 解码：
+   - **zoom 表**：`(zoom_max−zoom_min+1)` 行 × 2 列的累积 POI/Way 计数，取查询 zoom 对应行得到本 zoom 的 POI/Way 数。
+   - **POI**：VBE-S 相对瓦片角增量坐标 → 绝对微度；special 字节高 4 位 layer、低 4 位标签数；读标签 + feature 字节（bit7=name、bit6=house、bit5=elevation）；坐标超出 bbox 则跳过。
+   - **Way**：way_data_size → 子瓦片位图 → special 字节 → 标签 + feature 字节（bit7=name、bit6=house、bit5=ref、bit4=标签坐标、bit3=way 块数、bit2=double-delta）→ 多个 way 块 × 多个坐标块，逐节点做**增量坐标解码**（首点相对瓦片角，后点相对前点；double-delta 再叠一层），最后按 bbox 包围盒过滤。`way_is_closed` 由首尾节点相同判定。
+
+`mf_frame_free` 统一释放帧内 name/way_nodes/对象数组/水瓦片表。
+
+---
+
+### mf_theme — 样式分类
+
+`mf_style_get()` 按对象类型分发：POI → `classify_poi`，Way → `classify_way`。产出 `mf_style_t`：
+
+```
+group      绘制分组 (WATER/LANDUSE/GREEN/PEDAREA/BUILDING/LINE/POI)
+rank       组内 z 序 (线: 越大越重要, 后画在上层)
+fill/outline   面填充色 / 面描边色
+line/casing     线颜色 / 道路描边(壳)颜色
+width_q4    zoom15 基准线宽 (1/16 px)
+min_zoom   最小可见 zoom
+label_zoom / label_max_zoom  标注显示区间 (-1 = 永不标)
+label_color / label_size     标注颜色与字号
+poi_dot / poi_dot_zoom        POI 圆点颜色与最小 zoom
+is_area     该 way 是否按面填充
+```
+
+#### Way 分类顺序（命中即返回，优先级从上到下）
+
+1. **水系**：`natural=sea/bay` → 海瓦片矩形（rank 0，画在最底层）；`natural=coastline` → 不在此分类（由专门的洪泛海岸线 pass 处理）；`natural=nosea` → 陆地占位多边形（rank 1，画在海岸线之上）；`natural=water`/`landuse=reservoir/basin` → 内陆水体（rank 2）。
+2. **绿地**：forest/wood、park/garden（带名称标注）、grass/meadow、scrub/heath、beach/sand、cemetery、pitch/playground/stadium、swimming_pool。
+3. **建成区/土地利用**：residential、commercial/retail、industrial/railway、construction、parking、pier；医院/学校等机构面（rank 6/7）。
+4. **建筑**：`building=*`（z≥14，带描边）、航站楼/酒店/博物馆/城堡。
+5. **步行广场**：`area=yes` + pedestrian/footway 闭环。
+6. **水系线** `waterway=*`、**铁路** `railway=rail`（其余 railway 跳过）、**障碍物** `barrier=*`。
+7. **道路**（23 级表，含 motorway→cycleway）：每级定义 rank/颜色/描边/基准宽/min_zoom；隧道（`tunnel=yes`）混合陆地色去壳；rank≥50 从 z12 起标名、rank≥20 从 z14~16 起标名。
+
+#### 线宽缩放
+
+`mf_zoom_width()`：基准宽（z15, 1/16px）× 查表因子 `2^((z−15)·0.75)`（Q8 定点，z0~z21 各一档），结果四舍五入到像素且最小 1px。低 zoom 道路在屏幕上成比例变细，避免低 zoom 糊成一片。
+
+#### POI 分类顺序
+
+1. **地名标注**（无圆点，大字号，zoom 上限隐藏）：country/city/town/village/suburb/hamlet，rank=90（标注最先绘制，最优先）。
+2. **类别圆点 + 名称**（30+ 类）：医院/药店/餐饮/商店/旅游/铁路/加油/停车/学校等，每类定义圆点色、圆点最小 zoom、名称最小 zoom；名称在圆点下方 10px。
+3. **兜底**：其余 POI（长凳/栏杆/ATM…）z≥17 显示灰色小点，无名称。
+
+---
+
+### mf_render — 渲染管线
+
+`mf_render()` 为单帧入口，绘制顺序严格固定（后画的覆盖先画的）：
+
+```
+ 1. 网格底 (0xd9d9d9)                 ← 无数据区域标识
+ 2. 地图 bbox 填陆地色 (0xf5f3ee)      ← 有数据区域的基底
+ 3. 索引全水域瓦片 → 填海色 (0xa9d3e6)
+ 4. 海瓦片矩形 (MF_G_WATER rank 0)     ← 粗糙海块兜底
+ 5. 海岸线洪泛填海 (见下节)             ← 用 coastline 重建真实海陆
+ 6. nosea 陆地占位 + 内陆水体 (rank 1..1000)   ← 覆盖在海岸线之上
+ 7. 面: LANDUSE → GREEN → PEDAREA → BUILDING
+ 8. 线: 先全部描边 (casing pass) 再全部填充 (fill pass)
+ 9. 标注: 地名 → 道路名 → 绿地名 → POI 圆点+名
+10. 后处理: bbox 外重绘无数据网格 (0xc8d8e8 底 + 网格线)
+```
+
+#### 投影与视口（`mf_view_*`）
+
+- **Web Mercator**：`mf_view_project` 把微度经纬度 → 画布像素（经度线性缩放、纬度经墨卡托公式）；`project_d` 为双精度版（投影不取整，供海岸线等亚像素精度使用）。
+- **平移** `mf_view_pan`：按 zoom 把像素位移 dx/dy 反算为经纬度增量（纬度经墨卡托反变换），并维护微度跟踪值。
+- **视口 bbox** `mf_view_bbox`：由中心点 + 画布尺寸 + 8% 边距 `RENDER_MARGIN` 计算可见经纬度矩形，供 `mf_query` 取块。
+
+#### 扫描线多边形填充（`fb_fill_polygon`）
+
+自研 even-odd 扫描线填充，直接写画布帧缓冲：
+- 逐行求多边形各边与该行中心线的交点（半开区间规则，正确处理顶点）；
+- 交点按插入排序（边数少）后成对填充区间；
+- 无三角剖分、无裁剪，任意凹凸/自交多边形均健壮；行范围裁剪到画布。
+
+用于面绘制、岛屿陆地填充。
+
+#### 两遍道路绘制
+
+所有线要素先按 `(layer+5)*100 + rank` 排序（qsort），次要在下、主要在上：
+- **第 1 遍**：全部道路画描边壳（宽度 = 主宽 + 2px，`round_start/end` 圆头），先画的壳会被后画的壳/主线覆盖，交叉口自然干净；
+- **第 2 遍**：全部道路画主线（宽度 = `mf_zoom_width` 结果）。
+
+#### 海岸线洪泛填海（`fill_coastline`）
+
+**背景**：.map 文件里 `natural=sea/nosea` 多边形是低 zoom 下的粗糙瓦片矩形（数据不可靠，且 coastline 数据中 way 方向不一致），因此当帧内存在 `natural=coastline` 时，改用海岸线真实几何重建海陆。
+
+**算法（洪泛，无多边形拼装）**：
+
+```
+ 1. 收集 frame 内所有 coastline way → 链 (coast_chain_t)
+ 2. 按端点匹配合并链 (e6_near, 亚米级, 支持 4 种拼接方向)
+ 3. 闭合链 = 岛屿 → 扫描线填充陆地色 (0xf5f3ee)
+ 4. 分配 1-bit 屏障位图 (240×320/8 = 9600 B)
+ 5. 把所有海岸线段 Bresenham 画成粗屏障线 (半径随 zoom: z<14 为 2, z≥14 为 3)
+ 6. 从「索引全水域瓦片」四角 (已知海) 做 BFS 4-连通洪泛,
+    遇屏障位停止 → visited 位图 = 海
+ 7. visited 像素 → 直接写帧缓冲为海色 (0xa9d3e6)
+```
+
+**为什么用洪泛而非拼环**：旧实现先按「道路节点投票」判定每个 run 的陆地方向，再沿画布边界把 run 连成闭合多边形。低 zoom 数据碎片化时，边界行走会在实际海岸线之外生成大块伪陆地（V 形/跨海陆块），且平移时不稳定。洪泛完全**不依赖 way 方向、不做多边形拼装**：屏障线 + BFS 天然区分海陆，碎片缺口只会造成局部小渗漏而非整块伪陆地。岛屿由闭合链单独填充。
+
+#### 标注（`text_halo` + 碰撞检测）
+
+- 文字绘制为**白色光晕 + 前景色**（上/下/左/右各偏移 1px 画白色，再居中画前景），MAPS.ME 风格、深色道路上可读。
+- **碰撞检测**：`draw_ctx_t.lbl[]` 矩形表（上限 `LBL_MAX=96`），每帧累计已标矩形，新标注须不与任何已有矩形相交（`LBL_PAD=2px` 内边距）才绘制。
+- **道路名去重**：同名道路 90px 半径内不重复标注（`road_name_seen`），避免分段道路重名刷屏。
+- **标注优先级**：地名（rank≥90）→ 道路名（由主到次倒序）→ 绿地/公园名 → POI 名。
+- **字体**：检测文本含 `>=0x80` 字节（CJK）自动切 `simsun_16_cjk`，否则按字号用 `montserrat_10/12/14/16`。
+
+#### 性能优化
+
+- **节点抽稀**（`way_to_pixels`）：投影后相邻像素距离 <1.5px 的节点丢弃（闭合线保留尾点），减少绘制段数。
+- **数据防护**：`WAY_NODES_MAX=1024` 跳过超大/损坏 way；VBE-S 超 10 字节判损。
+- **帧级去重**：全水域瓦片在收集时去重；同名道路标注去重。
+- **一次样式解析**：`mf_render` 先为整帧算好 `styles[]`，所有 pass 共享，避免重复标签匹配。
+- **洪泛内存**：屏障/visited 位图各 ~9.6KB + BFS 环形队列 ~300KB（上限整屏像素），均用后即释放。
+
+### 关键数据结构
+
+```
+mf_frame_t {                     // 一帧查询结果
+    mf_obj_t        *objs;       // 对象数组 (POI/Way, 由 mf_query 填充)
+    int32_t          count;
+    mf_water_tile_t *water_tiles;// 索引全水域瓦片 (base zoom 瓦片行列)
+    int32_t          water_tile_cnt;
+}
+mf_obj_t {
+    type; layer; tag_ids[16]; name;
+    pos (POI 坐标) | way_nodes[] / way_node_cnt / way_is_closed (Way)
+}
+mf_style_t { group; rank; fill/outline/line/casing/width_q4;
+             min_zoom; label_zoom/max/color/size; poi_dot/poi_dot_zoom; }
+mf_view_t { zoom; center_lat/lon; w; h }   // 视口
+```
 
 ### page_settings 设置页
 

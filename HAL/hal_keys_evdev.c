@@ -13,7 +13,7 @@
 
 #define EVDEV_PATH "/dev/input"
 
-/* evdev 按键码 -> key_id_t (KEY_* 为 linux 宏, KEY_BTN_* 为应用枚举) */
+/* evdev key code -> key_id_t (KEY_* are linux macros, KEY_BTN_* app enum) */
 static int map_code(unsigned code)
 {
     switch (code) {
@@ -48,7 +48,7 @@ static int open_key_device(void)
         if (fd < 0)
             continue;
 
-        /* 检查是否含 KEY_UP/KEY_DOWN 等导航键 */
+        /* Check whether the device has the UP/DOWN/ENTER navigation keys. */
         unsigned char bits[KEY_MAX / 8 + 1] = {0};
         if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(bits)), bits) >= 0) {
             if ((bits[KEY_UP / 8] & (1 << (KEY_UP % 8))) &&
@@ -68,11 +68,13 @@ static int open_key_device(void)
     return -1;
 }
 
+/* Sleep for the given number of milliseconds. */
 void hal_delay_ms(uint32_t ms)
 {
     usleep(ms * 1000);
 }
 
+/* Return the monotonic tick in milliseconds (gettimeofday-based). */
 uint32_t hal_tick_get(void)
 {
     struct timeval tv;
@@ -80,11 +82,13 @@ uint32_t hal_tick_get(void)
     return (uint32_t)(tv.tv_sec * 1000 + tv.tv_usec / 1000);
 }
 
+/* The real device runs forever. */
 int hal_should_quit(void)
 {
     return 0;
 }
 
+/* Open the first evdev device that has the navigation keys. */
 int hal_key_init(void)
 {
     if (!s_opened && open_key_device() != 0) {
@@ -94,6 +98,10 @@ int hal_key_init(void)
     return 0;
 }
 
+/*
+ * Read one key event (non-blocking). Returns 1 if a mapped event was
+ * read into *ev, otherwise 0. Autorepeat (value=2) is treated as press.
+ */
 int hal_key_read(key_event_t *ev)
 {
     if (s_fd < 0)
@@ -112,6 +120,6 @@ int hal_key_read(key_event_t *ev)
         return 0;
 
     ev->id       = (key_id_t)id;
-    ev->is_press = (ie.value != 0) ? 1 : 0;   /* value: 0=抬起, 1=按下, 2=按住重复 */
+    ev->is_press = (ie.value != 0) ? 1 : 0;   /* value: 0=release, 1=press, 2=autorepeat */
     return 1;
 }
