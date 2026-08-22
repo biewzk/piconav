@@ -267,27 +267,31 @@ static bool e6_near(const mf_coord_t *a, const mf_coord_t *b)
 /* ------------------------------------------------------------------ */
 /* Flood-fill coastline (no polygon assembly needed)                    */
 /*                                                                     */
-/* Draw coastline ways as thick barrier lines on a 1-bit bitmap, then  */
+/* Draw coastline ways as thick barrier lines on a 1-bit bitmap, then   */
 /* BFS flood-fill from known sea reference points (water tile corners). */
 /* Pixels reachable from sea without crossing a barrier are sea.        */
+/* All bitmaps are sized dynamically from the canvas dimensions.        */
 /* ------------------------------------------------------------------ */
 
-#define COAST_CW  240
-#define COAST_CH  320
-#define COAST_BW  ((COAST_CW + 7) / 8)
+typedef struct {
+    int32_t  w;      /* width in pixels */
+    int32_t  h;      /* height in pixels */
+    int32_t  bw;     /* bytes per row */
+    uint8_t *bits;
+} coast_bm_t;
 
-static inline void bf_set(uint8_t *bm, int x, int y)
+static inline void bf_set(coast_bm_t *bm, int x, int y)
 {
-    bm[y * COAST_BW + x / 8] |= (uint8_t)(1u << (x & 7));
+    bm->bits[y * bm->bw + x / 8] |= (uint8_t)(1u << (x & 7));
 }
 
-static inline bool bf_test(const uint8_t *bm, int x, int y)
+static inline bool bf_test(const coast_bm_t *bm, int x, int y)
 {
-    return (bm[y * COAST_BW + x / 8] >> (x & 7)) & 1;
+    return (bm->bits[y * bm->bw + x / 8] >> (x & 7)) & 1;
 }
 
 /* Draw a thick line (rasterize with Bresenham, radius = thickness/2) */
-static void bf_draw_line(uint8_t *bm, int x0, int y0, int x1, int y1, int rad)
+static void bf_draw_line(coast_bm_t *bm, int x0, int y0, int x1, int y1, int rad)
 {
     int dx = x1 - x0, dy = y1 - y0;
     int sx = dx >= 0 ? 1 : -1, sy = dy >= 0 ? 1 : -1;
@@ -298,11 +302,11 @@ static void bf_draw_line(uint8_t *bm, int x0, int y0, int x1, int y1, int rad)
         /* draw a filled circle of radius rad at (x0, y0) */
         for (int ry = -rad; ry <= rad; ry++) {
             int yy = y0 + ry;
-            if (yy < 0 || yy >= COAST_CH) continue;
+            if (yy < 0 || yy >= bm->h) continue;
             int xmax = (int)llround(sqrt((double)(rad * rad - ry * ry)));
             for (int rx = -xmax; rx <= xmax; rx++) {
                 int xx = x0 + rx;
-                if (xx >= 0 && xx < COAST_CW)
+                if (xx >= 0 && xx < bm->w)
                     bf_set(bm, xx, yy);
             }
         }
@@ -394,19 +398,19 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
                     }
                 }
                 int32_t nn = a->n + b->n;
-                mf_coord_t *np = malloc((size_t)nn * sizeof(mf_coord_t));
+                mf_coord_t *np = realloc(a->pts, (size_t)nn * sizeof(mf_coord_t));
                 if (np) {
+                    a->pts = np;
                     if (prepend) {
+                        memmove(np + b->n, np, (size_t)a->n * sizeof(mf_coord_t));
                         memcpy(np, b->pts, (size_t)b->n * sizeof(mf_coord_t));
-                        memcpy(np + b->n, a->pts, (size_t)a->n * sizeof(mf_coord_t));
                     } else {
-                        memcpy(np, a->pts, (size_t)a->n * sizeof(mf_coord_t));
                         memcpy(np + a->n, b->pts, (size_t)b->n * sizeof(mf_coord_t));
                     }
-                    free(a->pts);
-                    a->pts = np;
                     a->n = nn;
                 }
+                /* On allocation failure b is dropped to guarantee
+                 * termination; a keeps its points. */
                 free(b->pts);
                 b->pts = NULL;
                 b->n = 0;
@@ -439,9 +443,15 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
         any_fill = true;
     }
 
-    /* allocate barrier bitmap and draw coastline ways as thick lines */
-    uint8_t *barrier = calloc(COAST_BW * COAST_CH, 1);
-    if (!barrier)
+    /* allocate barrier bitmap sized to the canvas and draw coastline
+     * ways as thick lines */
+    lv_img_dsc_t *img = lv_canvas_get_img(ctx->canvas);
+    coast_bm_t barrier;
+    barrier.w = img->header.w;
+    barrier.h = img->header.h;
+    barrier.bw = (barrier.w + 7) / 8;
+    barrier.bits = calloc((size_t)barrier.bw * barrier.h, 1);
+    if (!barrier.bits)
         goto done;
 
     int thickness = ctx->zoom >= 14 ? 3 : 2;
@@ -457,19 +467,20 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
             project_d(ctx->view, c->pts[k + 1].lat_e6, c->pts[k + 1].lon_e6, &bx, &by);
             int x0 = (int)llround(ax), y0 = (int)llround(ay);
             int x1 = (int)llround(bx), y1 = (int)llround(by);
-            bf_draw_line(barrier, x0, y0, x1, y1, rad);
+            bf_draw_line(&barrier, x0, y0, x1, y1, rad);
         }
     }
 
     /* BFS flood fill from sea seed points (water tile corners) */
     {
-        uint8_t *visited = calloc(COAST_BW * COAST_CH, 1);
-        if (!visited) { free(barrier); goto done; }
+        coast_bm_t visited = { barrier.w, barrier.h, barrier.bw,
+                               calloc((size_t)barrier.bw * barrier.h, 1) };
+        if (!visited.bits) { free(barrier.bits); goto done; }
 
         bfs_q_t q;
-        q.cap = COAST_CW * COAST_CH;
+        q.cap = barrier.w * barrier.h;
         q.buf = malloc((size_t)q.cap * sizeof(int32_t));
-        if (!q.buf) { free(visited); free(barrier); goto done; }
+        if (!q.buf) { free(visited.bits); free(barrier.bits); goto done; }
         q.head = q.tail = 0;
 
         /* seed from water tile corners */
@@ -483,10 +494,10 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
                 double x, y;
                 project_d(ctx->view, (int32_t)llround(lat * 1e6), (int32_t)llround(lon * 1e6), &x, &y);
                 int px = (int)llround(x), py = (int)llround(y);
-                if (px >= 0 && px < COAST_CW && py >= 0 && py < COAST_CH &&
-                    !bf_test(barrier, px, py) && !bf_test(visited, px, py)) {
-                    bf_set(visited, px, py);
-                    bq_push(&q, py * COAST_CW + px);
+                if (px >= 0 && px < barrier.w && py >= 0 && py < barrier.h &&
+                    !bf_test(&barrier, px, py) && !bf_test(&visited, px, py)) {
+                    bf_set(&visited, px, py);
+                    bq_push(&q, py * barrier.w + px);
                 }
             }
         }
@@ -496,36 +507,53 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
         static const int dy4[4] = { 0, 0, 1, -1 };
         while (!bq_empty(&q)) {
             int32_t v = bq_pop(&q);
-            int cx = v % COAST_CW, cy = v / COAST_CW;
+            int cx = v % barrier.w, cy = v / barrier.w;
             for (int d = 0; d < 4; d++) {
                 int nx = cx + dx4[d], ny = cy + dy4[d];
-                if (nx < 0 || nx >= COAST_CW || ny < 0 || ny >= COAST_CH)
+                if (nx < 0 || nx >= barrier.w || ny < 0 || ny >= barrier.h)
                     continue;
-                if (bf_test(barrier, nx, ny) || bf_test(visited, nx, ny))
+                if (bf_test(&barrier, nx, ny) || bf_test(&visited, nx, ny))
                     continue;
-                bf_set(visited, nx, ny);
-                bq_push(&q, ny * COAST_CW + nx);
+                bf_set(&visited, nx, ny);
+                bq_push(&q, ny * barrier.w + nx);
             }
         }
         free(q.buf);
 
+        /* DEBUG: dump barrier/visited bitmaps for offline inspection */
+        if (getenv("MF_DUMP_COAST")) {
+            FILE *fp = fopen("/tmp/coast_barrier.pbm", "wb");
+            if (fp) {
+                fprintf(fp, "P4\n%d %d\n", barrier.w, barrier.h);
+                fwrite(barrier.bits, 1, (size_t)barrier.bw * barrier.h, fp);
+                fclose(fp);
+            }
+            fp = fopen("/tmp/coast_visited.pbm", "wb");
+            if (fp) {
+                fprintf(fp, "P4\n%d %d\n", visited.w, visited.h);
+                fwrite(visited.bits, 1, (size_t)visited.bw * visited.h, fp);
+                fclose(fp);
+            }
+            fprintf(stderr, "mf: coast dump: water_tiles=%d chains=%d\n",
+                    (int)frame->water_tile_cnt, (int)nch);
+        }
+
         /* fill sea pixels on canvas with sea color */
-        lv_img_dsc_t *img = lv_canvas_get_img(ctx->canvas);
         lv_color_t *fb = (lv_color_t *)img->data;
         int32_t W = img->header.w;
         lv_color_t sea = lv_color_hex(0xa9d3e6);
-        for (int y = 0; y < COAST_CH; y++) {
-            for (int x = 0; x < COAST_CW; x++) {
-                if (bf_test(visited, x, y))
+        for (int y = 0; y < barrier.h; y++) {
+            for (int x = 0; x < barrier.w; x++) {
+                if (bf_test(&visited, x, y))
                     fb[y * W + x] = sea;
             }
         }
 
-        free(visited);
+        free(visited.bits);
         any_fill = true;
     }
 
-    free(barrier);
+    free(barrier.bits);
 
 done:
     for (int32_t i = 0; i < nch; i++)
@@ -656,22 +684,24 @@ static void draw_way_label(draw_ctx_t *ctx, const mf_obj_t *o, const mf_style_t 
 
 static void draw_area_label(draw_ctx_t *ctx, const mf_obj_t *o, const mf_style_t *s)
 {
-    if (!o->name)
+    if (!o->name || o->way_node_cnt < 1)
         return;
-    /* centroid of the way nodes (cheap, good enough for parks) */
+    /* centroid of the on-screen way nodes only (off-screen corners
+     * would drag the label out of view) */
     int64_t sx = 0, sy = 0;
     int inside = 0;
     for (int i = 0; i < o->way_node_cnt; i++) {
         lv_point_t p;
-        if (mf_view_project(ctx->view, o->way_nodes[i].lat_e6, o->way_nodes[i].lon_e6, &p) == 0)
-            inside++;
+        if (mf_view_project(ctx->view, o->way_nodes[i].lat_e6, o->way_nodes[i].lon_e6, &p) != 0)
+            continue;
         sx += p.x;
         sy += p.y;
+        inside++;
     }
     if (!inside)
         return;
-    lv_coord_t cx = (lv_coord_t)(sx / o->way_node_cnt);
-    lv_coord_t cy = (lv_coord_t)(sy / o->way_node_cnt);
+    lv_coord_t cx = (lv_coord_t)(sx / inside);
+    lv_coord_t cy = (lv_coord_t)(sy / inside);
     text_halo(ctx, cx, cy, o->name, s->label_size, s->label_color);
 }
 
@@ -776,6 +806,9 @@ void mf_view_bbox(const mf_view_t *v, int32_t *min_lat, int32_t *min_lon,
     double span_norm = (double)v->h * (1.0 + RENDER_MARGIN) / (double)((int64_t)1 << v->zoom) / 256.0;
     double y0 = cy - span_norm / 2.0;
     double y1 = cy + span_norm / 2.0;
+    /* clamp to the Mercator range: beyond it exp()/tan() overflow */
+    if (y0 < 0.0) y0 = 0.0;
+    if (y1 > 1.0) y1 = 1.0;
 
     double lat_to_deg = 180.0 / M_PI;
     double n0 = M_PI - 2.0 * M_PI * y0;
@@ -889,8 +922,10 @@ void mf_render(mf_map_t *m, const mf_view_t *v, mf_frame_t *frame, lv_obj_t *can
         by1 = tl.y < br.y ? tl.y : br.y;
         bx2 = tl.x > br.x ? tl.x : br.x;
         by2 = tl.y > br.y ? tl.y : br.y;
-        if (bx1 < 0) bx1 = 0; if (by1 < 0) by1 = 0;
-        if (bx2 > v->w) bx2 = v->w; if (by2 > v->h) by2 = v->h;
+        if (bx1 < 0) bx1 = 0;
+        if (by1 < 0) by1 = 0;
+        if (bx2 > v->w) bx2 = v->w;
+        if (by2 > v->h) by2 = v->h;
     }
 
     /* fill map data bbox with opaque land color (covers the grid in data area) */
@@ -909,8 +944,13 @@ void mf_render(mf_map_t *m, const mf_view_t *v, mf_frame_t *frame, lv_obj_t *can
     draw_area_group(&ctx, frame, styles, MF_G_WATER, 0, 0);
 
     /* sea + land from coastline ways where available (true coast shape) */
-    if (!getenv("MF_NOCOAST"))
-        fill_coastline(&ctx, m, frame, styles);
+    {
+        static int8_t nocoast = -1;
+        if (nocoast < 0)
+            nocoast = getenv("MF_NOCOAST") != NULL;
+        if (!nocoast)
+            fill_coastline(&ctx, m, frame, styles);
+    }
 
     /* nosea land-claim polygons + inland water (on top of the coastline fill) */
     draw_area_group(&ctx, frame, styles, MF_G_WATER, 1, 1000);
@@ -950,9 +990,14 @@ void mf_render(mf_map_t *m, const mf_view_t *v, mf_frame_t *frame, lv_obj_t *can
         }
     }
 
-    if (getenv("MF_DEBUG"))
-        fprintf(stderr, "mf: frame=%d lines=%d zoom=%d\n",
-                (int)frame->count, (int)line_cnt, (int)v->zoom);
+    {
+        static int8_t dbg = -1;
+        if (dbg < 0)
+            dbg = getenv("MF_DEBUG") != NULL;
+        if (dbg)
+            fprintf(stderr, "mf: frame=%d lines=%d zoom=%d\n",
+                    (int)frame->count, (int)line_cnt, (int)v->zoom);
+    }
 
     /* pass 1: all casings */
     for (int32_t i = 0; i < line_cnt; i++)

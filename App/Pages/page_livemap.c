@@ -67,6 +67,8 @@ static void livemap_redraw(livemap_priv_t *d)
     if (rc != MF_OK) {
         lv_label_set_text_fmt(d->info, "query error: %s", mferr_str(rc));
         lv_canvas_fill_bg(d->canvas, lv_color_hex(0xf5f3ee), LV_OPA_COVER);
+        /* A failed query may still hold objects parsed before the error. */
+        mf_frame_free(&frame);
         return;
     }
 

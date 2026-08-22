@@ -44,19 +44,6 @@ static void page_build(page_t *page)
         page->ops->create(page);
 }
 
-/* Run the page's teardown callbacks and delete its screen. */
-static void page_unload(page_t *page)
-{
-    if (page->ops->on_hide)
-        page->ops->on_hide(page);
-    if (page->ops->destroy)
-        page->ops->destroy(page);
-    if (page->scr) {
-        lv_obj_del(page->scr);
-        page->scr = NULL;
-    }
-}
-
 /*
  * Push a page onto the stack: build it, hide the old page, show the
  * new one and run the slide-in transition.
@@ -66,6 +53,12 @@ void page_manager_push(page_t *page)
     if (s_depth >= PAGE_STACK_MAX) {
         LOG_W("push rejected: page stack full (%s, depth=%d)", page->name, s_depth);
         return;
+    }
+    for (int i = 0; i < s_depth; i++) {
+        if (s_stack[i] == page) {
+            LOG_W("push rejected: page already on stack (%s, depth=%d)", page->name, s_depth);
+            return;
+        }
     }
 
     page_t *old = page_manager_top();
@@ -96,6 +89,10 @@ void page_manager_replace(page_t *page)
     }
 
     page_t *old = s_stack[s_depth - 1];
+    if (old == page) {
+        LOG_W("replace rejected: page is already on top (%s)", page->name);
+        return;
+    }
     page_build(page);
     s_stack[s_depth - 1] = page;
     LOG_I("replace: %s -> %s (depth=%d)", old->name, page->name, s_depth);

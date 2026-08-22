@@ -635,7 +635,12 @@ static int parse_block(const mf_map_t *m, const mf_subfile_t *sf,
         rc = r_byte(&r, &sp);
         if (rc != MF_OK)
             return rc;
+        /* Special byte: high nibble = layer + 5 (biased, 0..10),
+         * low nibble = number of tags. */
         int32_t layer = (sp >> 4) & 0x0f;
+        if (layer > 10)
+            layer = 10;
+        layer -= 5;
         int32_t ntags = sp & 0x0f;
 
         int32_t ids[16];
@@ -722,7 +727,12 @@ static int parse_block(const mf_map_t *m, const mf_subfile_t *sf,
             rc = r_byte(&r, &sp);
             if (rc != MF_OK)
                 return rc;
+            /* Special byte: high nibble = layer + 5 (biased, 0..10),
+             * low nibble = number of tags. */
             int32_t layer = (sp >> 4) & 0x0f;
+            if (layer > 10)
+                layer = 10;
+            layer -= 5;
             int32_t ntags = sp & 0x0f;
 
             int32_t ids[16];
@@ -919,19 +929,24 @@ int mf_query(const mf_map_t *m, int32_t zoom,
             if (off < 1 || off > sf->sub_file_size)
                 continue;
 
-            /* Next block offset determines the block size */
-            int64_t next_off;
-            if (block + 1 == sf->num_blocks) {
-                next_off = sf->sub_file_size;
-            } else {
+            /* The block extends up to the next non-empty block: entries
+             * with offset 0 (empty or pure-water tiles) must be skipped,
+             * otherwise the size would go negative and this block would
+             * be silently dropped. */
+            int64_t next_off = sf->sub_file_size;
+            for (int64_t nb = block + 1; nb < sf->num_blocks; nb++) {
                 uint8_t nidx[5];
-                rc = f_read_at(m->fp, sf->index_start_addr + (block + 1) * 5, nidx, 5);
+                rc = f_read_at(m->fp, sf->index_start_addr + nb * 5, nidx, 5);
                 if (rc != MF_OK)
                     return rc;
                 int64_t ne = 0;
                 for (int i = 0; i < 5; i++)
                     ne = (ne << 8) | nidx[i];
-                next_off = ne & MF_INDEX_OFFSET_MASK;
+                int64_t noff = ne & MF_INDEX_OFFSET_MASK;
+                if (noff >= 1) {
+                    next_off = noff;
+                    break;
+                }
             }
             int64_t blk_size = next_off - off;
             if (blk_size <= 0 || blk_size > 8 * 1024 * 1024)
