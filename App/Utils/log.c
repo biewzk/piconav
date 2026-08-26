@@ -20,7 +20,7 @@ void log_init(void)
     openlog("pico_nav", LOG_PID | LOG_NDELAY, LOG_USER);
 }
 
-void log_write(int level, const char *file, int line, const char *fmt, ...)
+void log_write(int level, const char *fmt, ...)
 {
     char msg[512];
 
@@ -31,13 +31,13 @@ void log_write(int level, const char *file, int line, const char *fmt, ...)
 
     /* Go through syslog: on device collected by BusyBox syslogd
      * (default /var/log/messages) */
-    syslog(level, "%s:%d %s", file, line, msg);
+    syslog(level, "%s", msg);
 
     if (s_console) {
         static const char *names[] = {
-            "", "", "", "ERR", "WARN", "", "INFO", "DEBUG",
+            "", "", "", "E", "W", "", "I", "D",
         };
         const char *n = (level >= 0 && level <= 7) ? names[level] : "?";
-        fprintf(stderr, "[pico_nav][%s] %s:%d %s\n", n, file, line, msg);
+        fprintf(stderr, "[pico_nav][%s] %s\n", n, msg);
     }
 }

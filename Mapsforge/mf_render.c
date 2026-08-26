@@ -3,6 +3,7 @@
 
 #include "mf_render.h"
 #include "mf_theme.h"
+#include "../App/Utils/log.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -124,7 +125,7 @@ static bool text_halo(draw_ctx_t *ctx, lv_coord_t cx, lv_coord_t cy,
         return false;
 
     lv_color_t fg = lv_color_hex(color);
-    lv_color_t halo = lv_color_hex(0xffffff);
+    lv_color_t halo = lv_color_hex(C_LABEL_HALO);
     text_raw(ctx->canvas, x - 1, y, w + 8, font, halo, txt);
     text_raw(ctx->canvas, x + 1, y, w + 8, font, halo, txt);
     text_raw(ctx->canvas, x, y - 1, w + 8, font, halo, txt);
@@ -200,8 +201,10 @@ static void fb_fill_polygon(lv_obj_t *canvas, const lv_point_t *p, int n, lv_col
 static lv_point_t *way_to_pixels(const mf_view_t *v, const mf_obj_t *o, int *out_n)
 {
     int n = o->way_node_cnt;
-    if (n > WAY_NODES_MAX)
+    if (n > WAY_NODES_MAX) {
+        LOG_D("way truncated: %d -> %d nodes", n, WAY_NODES_MAX);
         n = WAY_NODES_MAX;
+    }
     lv_point_t *pts = malloc((size_t)n * sizeof(lv_point_t));
     if (!pts) {
         *out_n = 0;
@@ -353,8 +356,10 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
         return false;
 
     coast_chain_t *chains = calloc((size_t)nways, sizeof(coast_chain_t));
-    if (!chains)
+    if (!chains) {
+        LOG_E("coastline: out of memory (chains)");
         return false;
+    }
     int32_t nch = 0;
     for (int32_t i = 0; i < frame->count; i++) {
         const mf_obj_t *o = &frame->objs[i];
@@ -364,7 +369,11 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
             continue;
         coast_chain_t *c = &chains[nch++];
         c->pts = malloc((size_t)o->way_node_cnt * sizeof(mf_coord_t));
-        if (!c->pts) { nch--; continue; }
+        if (!c->pts) {
+            LOG_W("coastline: way points alloc failed, way dropped");
+            nch--;
+            continue;
+        }
         memcpy(c->pts, o->way_nodes, (size_t)o->way_node_cnt * sizeof(mf_coord_t));
         c->n = o->way_node_cnt;
         c->closed = o->way_is_closed;
@@ -423,6 +432,7 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
     }
 
     bool any_fill = false;
+    int32_t islands = 0, sea_px = 0;
 
     /* islands (closed coastline rings): land fill */
     for (int32_t i = 0; i < nch; i++) {
@@ -438,8 +448,9 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
             poly[k].x = (lv_coord_t)llround(x);
             poly[k].y = (lv_coord_t)llround(y);
         }
-        fb_fill_polygon(ctx->canvas, poly, c->n, lv_color_hex(0xf5f3ee));
+        fb_fill_polygon(ctx->canvas, poly, c->n, lv_color_hex(C_LAND_BG));
         free(poly);
+        islands++;
         any_fill = true;
     }
 
@@ -451,8 +462,10 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
     barrier.h = img->header.h;
     barrier.bw = (barrier.w + 7) / 8;
     barrier.bits = calloc((size_t)barrier.bw * barrier.h, 1);
-    if (!barrier.bits)
+    if (!barrier.bits) {
+        LOG_E("coastline: out of memory (barrier bitmap)");
         goto done;
+    }
 
     int thickness = ctx->zoom >= 14 ? 3 : 2;
     int rad = thickness / 2 + 1;
@@ -475,12 +488,21 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
     {
         coast_bm_t visited = { barrier.w, barrier.h, barrier.bw,
                                calloc((size_t)barrier.bw * barrier.h, 1) };
-        if (!visited.bits) { free(barrier.bits); goto done; }
+        if (!visited.bits) {
+            LOG_E("coastline: out of memory (visited bitmap)");
+            free(barrier.bits);
+            goto done;
+        }
 
         bfs_q_t q;
         q.cap = barrier.w * barrier.h;
         q.buf = malloc((size_t)q.cap * sizeof(int32_t));
-        if (!q.buf) { free(visited.bits); free(barrier.bits); goto done; }
+        if (!q.buf) {
+            LOG_E("coastline: out of memory (bfs queue)");
+            free(visited.bits);
+            free(barrier.bits);
+            goto done;
+        }
         q.head = q.tail = 0;
 
         /* seed from water tile corners */
@@ -541,11 +563,13 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
         /* fill sea pixels on canvas with sea color */
         lv_color_t *fb = (lv_color_t *)img->data;
         int32_t W = img->header.w;
-        lv_color_t sea = lv_color_hex(0xa9d3e6);
+        lv_color_t sea = lv_color_hex(C_WATER);
         for (int y = 0; y < barrier.h; y++) {
             for (int x = 0; x < barrier.w; x++) {
-                if (bf_test(&visited, x, y))
+                if (bf_test(&visited, x, y)) {
                     fb[y * W + x] = sea;
+                    sea_px++;
+                }
             }
         }
 
@@ -556,6 +580,15 @@ static bool fill_coastline(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_t 
     free(barrier.bits);
 
 done:
+    {
+        int32_t live = 0;
+        for (int32_t i = 0; i < nch; i++)
+            if (chains[i].n > 0)
+                live++;
+        LOG_D("coastline: ways=%d chains=%d islands=%d sea_px=%d (%d%%)",
+              nways, live, islands, sea_px,
+              (int)(sea_px * 100 / (barrier.w * barrier.h)));
+    }
     for (int32_t i = 0; i < nch; i++)
         free(chains[i].pts);
     free(chains);
@@ -716,7 +749,7 @@ static void draw_poi(draw_ctx_t *ctx, const mf_obj_t *o, const mf_style_t *s)
         lv_draw_rect_dsc_t dsc;
         lv_draw_rect_dsc_init(&dsc);
         dsc.bg_opa = LV_OPA_COVER;
-        dsc.bg_color = lv_color_hex(0xffffff);
+        dsc.bg_color = lv_color_hex(C_LABEL_HALO);
         dsc.radius = 4;
         lv_canvas_draw_rect(ctx->canvas, p.x - 4, p.y - 4, 8, 8, &dsc);
         dsc.bg_color = lv_color_hex(s->poi_dot);
@@ -859,7 +892,7 @@ static void fill_water_tiles(draw_ctx_t *ctx, const mf_map_t *m, const mf_frame_
 
     lv_draw_rect_dsc_t dsc;
     lv_draw_rect_dsc_init(&dsc);
-    dsc.bg_color = lv_color_hex(0xa9d3e6);
+    dsc.bg_color = lv_color_hex(C_WATER);
     dsc.bg_opa = LV_OPA_COVER;
 
     for (int32_t i = 0; i < frame->water_tile_cnt; i++) {
@@ -910,7 +943,7 @@ void mf_render(mf_map_t *m, const mf_view_t *v, mf_frame_t *frame, lv_obj_t *can
     }
 
     /* background: semi-transparent grid pattern (marks areas with no map data) */
-    lv_canvas_fill_bg(canvas, lv_color_hex(0xd9d9d9), LV_OPA_COVER);
+    lv_canvas_fill_bg(canvas, lv_color_hex(C_NO_DATA_BG), LV_OPA_COVER);
 
     /* project map data bbox to pixel coords */
     lv_coord_t bx1, by1, bx2, by2;
@@ -932,7 +965,7 @@ void mf_render(mf_map_t *m, const mf_view_t *v, mf_frame_t *frame, lv_obj_t *can
     {
         lv_draw_rect_dsc_t ld;
         lv_draw_rect_dsc_init(&ld);
-        ld.bg_color = lv_color_hex(0xf5f3ee);
+        ld.bg_color = lv_color_hex(C_LAND_BG);
         ld.bg_opa = LV_OPA_COVER;
         lv_canvas_draw_rect(canvas, bx1, by1, bx2 - bx1, by2 - by1, &ld);
     }
@@ -1057,7 +1090,7 @@ void mf_render(mf_map_t *m, const mf_view_t *v, mf_frame_t *frame, lv_obj_t *can
     {
         lv_draw_rect_dsc_t nd;
         lv_draw_rect_dsc_init(&nd);
-        nd.bg_color = lv_color_hex(0xc8d8e8);
+        nd.bg_color = lv_color_hex(C_OUTSIDE_BG);
         nd.bg_opa = LV_OPA_COVER;
         /* left strip */
         if (bx1 > 0)
@@ -1074,7 +1107,7 @@ void mf_render(mf_map_t *m, const mf_view_t *v, mf_frame_t *frame, lv_obj_t *can
 
         lv_draw_line_dsc_t gd;
         lv_draw_line_dsc_init(&gd);
-        gd.color = lv_color_hex(0xaabbcc);
+        gd.color = lv_color_hex(C_GRID_LINE);
         gd.width = 1;
         gd.opa = LV_OPA_70;
         lv_point_t p[2];

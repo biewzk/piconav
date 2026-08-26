@@ -2,60 +2,8 @@
 
 #include <string.h>
 
-/* ------------------------------------------------------------------ */
-/* Palette (light theme, close to MAPS.ME / OSM Carto)                 */
-/* ------------------------------------------------------------------ */
-#define C_LAND_BG     0xf5f3ee
-#define C_WATER       0xa9d3e6
-
-#define C_FOREST      0xb5dca6
-#define C_PARK        0xc6e8b0
-#define C_GRASS       0xd6ecb9
-#define C_SCRUB       0xd2e4b4
-#define C_BEACH       0xf3e9b7
-#define C_CEMETERY    0xd2e1c2
-#define C_PITCH       0xbfe0a0
-
-#define C_RESIDENTIAL 0xece9e2
-#define C_COMMERCIAL  0xefe8e2
-#define C_INDUSTRIAL  0xe9e4dd
-#define C_CONSTRUCT   0xe4dfd7
-#define C_PARKING     0xe9e9e1
-#define C_PIER        0xefece4
-
-#define C_PEDAREA     0xefede6
-#define C_PEDAREA_O   0xd8d2c4
-
-#define C_BUILDING    0xddd4c7
-#define C_BUILDING_O  0xc7b9a9
-
-#define C_MOTORWAY    0xf7b54d
-#define C_MOTORWAY_C  0xd1912f
-#define C_PRIMARY     0xfdd45c
-#define C_PRIMARY_C   0xd9ae3c
-#define C_SECONDARY   0xfee087
-#define C_SECONDARY_C 0xdcc06b
-#define C_ROAD        0xffffff
-#define C_ROAD_C      0xd4cec2
-#define C_SERVICE_C   0xded8cc
-#define C_FOOTWAY     0xc9c1b6
-#define C_RACEWAY     0xf0c0c0
-#define C_RACEWAY_C   0xd89898
-#define C_RAIL        0x8e8e8e
-#define C_BARRIER     0xb8b0a4
-
-#define C_LABEL_ROAD  0x404040
-#define C_LABEL_AREA  0x3f6b34
-#define C_LABEL_POI   0x3c3c3c
-
-/* POI dot colors */
-#define C_POI_FOOD    0xe58a33
-#define C_POI_SHOP    0x8a6cd9
-#define C_POI_TOURISM 0x2f9e8f
-#define C_POI_HEALTH  0xd94f4f
-#define C_POI_TRANS   0x3f7fd9
-#define C_POI_EDU     0x9c6b3f
-#define C_POI_MISC    0x9a9a9a
+/* Palette macros (C_*) live in mf_theme.h so that the renderer shares
+ * the exact same color definitions. */
 
 /* ------------------------------------------------------------------ */
 /* Tag matching helpers                                                */

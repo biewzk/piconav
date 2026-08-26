@@ -16,12 +16,12 @@ extern "C" {
 void log_init(void);
 
 /* Core write function (use the macros below) */
-void log_write(int level, const char *file, int line, const char *fmt, ...);
+void log_write(int level, const char *fmt, ...);
 
-#define LOG_E(fmt, ...) log_write(LOG_LVL_ERR,   __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_W(fmt, ...) log_write(LOG_LVL_WARN,  __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_I(fmt, ...) log_write(LOG_LVL_INFO,  __FILE__, __LINE__, fmt, ##__VA_ARGS__)
-#define LOG_D(fmt, ...) log_write(LOG_LVL_DEBUG, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#define LOG_E(fmt, ...) log_write(LOG_LVL_ERR,   fmt, ##__VA_ARGS__)
+#define LOG_W(fmt, ...) log_write(LOG_LVL_WARN,  fmt, ##__VA_ARGS__)
+#define LOG_I(fmt, ...) log_write(LOG_LVL_INFO,  fmt, ##__VA_ARGS__)
+#define LOG_D(fmt, ...) log_write(LOG_LVL_DEBUG, fmt, ##__VA_ARGS__)
 
 #ifdef __cplusplus
 }

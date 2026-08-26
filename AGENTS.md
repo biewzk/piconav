@@ -26,7 +26,7 @@ SDL_VIDEODRIVER=dummy SIM_AUTOQUIT_MS=1500 \
 
 ## Architecture in one breath
 
-Platform entry (`main.c` / `sim/main_sim.c`) → `App/app.c` poll loop (`app_run()`: read keys→publish `MSG_KEY`, GPS→`MSG_GPS`, `lv_timer_handler()`, 5ms delay). Framework in `App/Utils/`: `page_manager` (page stack, lifecycle callbacks) + `msg_center` (pub/sub). Pages in `App/Pages/` implement `create/on_show/on_hide/on_key`; only the stack-top page receives keys. `Mapsforge/` is a self-contained .map v5 renderer that depends only on LVGL canvas — no App framework dependency.
+Platform entry (`main.c` / `sim/main_sim.c`) → `App/app.c` poll loop (`app_run()`: read keys→publish `MSG_KEY`, GPS→`MSG_GPS`, `lv_timer_handler()`, 5ms delay). Framework in `App/Utils/`: `page_manager` (page stack, lifecycle callbacks) + `msg_center` (pub/sub). Pages in `App/Pages/` implement `create/on_show/on_hide/on_key`; only the stack-top page receives keys. `Mapsforge/` is a self-contained .map v5 renderer that depends only on LVGL canvas and `App/Utils/log` (LOG_* macros; on device stderr is empty, syslog is the only observable channel) — no App framework (page_manager/msg_center) dependency.
 
 ## Conventions & gotchas
 

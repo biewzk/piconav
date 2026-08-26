@@ -2,6 +2,7 @@
 #define _DEFAULT_SOURCE
 
 #include "mf_map.h"
+#include "../App/Utils/log.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -210,8 +211,10 @@ const char *mf_way_tag(const mf_map_t *m, int32_t id)
 const mf_subfile_t *mf_get_subfile(const mf_map_t *m, int32_t zoom)
 {
     for (int i = 0; i < m->subfile_cnt; i++) {
-        if (zoom >= m->subfiles[i].zoom_min && zoom <= m->subfiles[i].zoom_max)
+        if (zoom >= m->subfiles[i].zoom_min && zoom <= m->subfiles[i].zoom_max) {
+            LOG_D("Currently using sub-file %d", i);
             return &m->subfiles[i];
+        }
     }
     return NULL;
 }
@@ -255,6 +258,7 @@ int mf_open(mf_map_t *m, const char *path)
         rc = MF_ERR_HEADER;
         goto fail;
     }
+    LOG_D("map header_size: %d", header_size);
 
     /* Read the remaining header into memory */
     uint8_t *hdr = malloc(header_size);
@@ -365,6 +369,8 @@ int mf_open(mf_map_t *m, const char *path)
             if (rc != MF_OK) { free(hdr); goto fail; }
         }
         m->start_pos.lon_e6 = (int32_t)(((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3]);
+        LOG_D("optional start position: %.4f,%.4f",
+              m->start_pos.lat_e6 / 1e6, m->start_pos.lon_e6 / 1e6);
     }
 
     /* optional: start zoom */
@@ -372,6 +378,8 @@ int mf_open(mf_map_t *m, const char *path)
         rc = r_byte(&r, &b0);
         if (rc != MF_OK) { free(hdr); goto fail; }
         m->start_zoom = b0;
+        // m->start_zoom = 10;
+        LOG_D("optional start zoom: %d", m->start_zoom);
     }
 
     /* optional: languages preference / comment / created by (strings, skip) */
@@ -405,6 +413,7 @@ int mf_open(mf_map_t *m, const char *path)
         for (int i = 0; i < n; i++) {
             rc = r_str(&r, &m->poi_tags[i]);
             if (rc != MF_OK) { free(hdr); goto fail; }
+            LOG_D("POI[%02d]: %s", i, m->poi_tags[i]);
         }
     }
 
@@ -419,8 +428,14 @@ int mf_open(mf_map_t *m, const char *path)
         for (int i = 0; i < n; i++) {
             rc = r_str(&r, &m->way_tags[i]);
             if (rc != MF_OK) { free(hdr); goto fail; }
+            LOG_D("WAY[%02d]: %s", i, m->way_tags[i]);
         }
     }
+
+    LOG_I("header: tile_size=%d projection=Mercator flags=0x%02x poi_tags=%d way_tags=%d",
+          m->tile_size, m->flags, m->poi_tag_cnt, m->way_tag_cnt);
+    if (m->is_debug_file)
+        LOG_W("debug map file: 16/32-byte debug sections will be skipped");
 
     /* number of sub-files */
     rc = r_byte(&r, &b0);
@@ -477,13 +492,35 @@ int mf_open(mf_map_t *m, const char *path)
         sf->blocks_height = sf->boundary_tile_bottom - sf->boundary_tile_top + 1;
         sf->num_blocks    = sf->blocks_width * sf->blocks_height;
         sf->index_end_addr = sf->index_start_addr + sf->num_blocks * 5;
+
+        LOG_I("subfile[%d]: zoom %d-%d base=%d offset=%lld size=%lld "
+              "grid=%lldx%lld blocks=%lld origin_tile=(%lld,%lld) index@%lld",
+              i, sf->zoom_min, sf->zoom_max, sf->base_zoom,
+              (long long)sf->start_addr, (long long)sf->sub_file_size,
+              (long long)sf->blocks_width, (long long)sf->blocks_height,
+              (long long)sf->num_blocks,
+              (long long)sf->boundary_tile_left,
+              (long long)sf->boundary_tile_top,
+              (long long)sf->index_start_addr);
     }
 
     free(hdr);
+    LOG_I("map '%s' opened: v%d subfiles=%d zoom %d-%d tile=%d tags=%d/%d%s "
+          "bbox(%.4f,%.4f)-(%.4f,%.4f)",
+          path, m->version, m->subfile_cnt, m->zoom_min, m->zoom_max,
+          m->tile_size, m->poi_tag_cnt, m->way_tag_cnt,
+          m->is_debug_file ? " [debug]" : "",
+          m->bbox_min.lat_e6 / 1e6, m->bbox_min.lon_e6 / 1e6,
+          m->bbox_max.lat_e6 / 1e6, m->bbox_max.lon_e6 / 1e6);
     return MF_OK;
 
 fail:
     mf_close(m);
+    LOG_E("map open failed '%s': rc=%d (%s)", path, rc,
+          rc == MF_ERR_IO     ? "io" :
+          rc == MF_ERR_MAGIC  ? "bad magic" :
+          rc == MF_ERR_HEADER ? "bad header" :
+          rc == MF_ERR_LIMIT  ? "out of memory" : "?");
     return rc;
 }
 
@@ -888,8 +925,10 @@ int mf_query(const mf_map_t *m, int32_t zoom,
     memset(frame, 0, sizeof(*frame));
 
     const mf_subfile_t *sf = mf_get_subfile(m, zoom);
-    if (!sf)
+    if (!sf) {
+        LOG_D("query z%d: no subfile covers this zoom", zoom);
         return MF_ERR_NO_SUBFILE;
+    }
 
     /* Query tile range (base zoom) */
     int64_t tmin_x = (int64_t)floor(mf_lon_to_tile_x((double)bbox_min_lon_e6 / 1e6, sf->base_zoom));
@@ -905,9 +944,13 @@ int mf_query(const mf_map_t *m, int32_t zoom,
     if (from_y < 0) from_y = 0;
     if (to_x >= sf->blocks_width)  to_x = sf->blocks_width - 1;
     if (to_y >= sf->blocks_height) to_y = sf->blocks_height - 1;
-    if (from_x > to_x || from_y > to_y)
+    if (from_x > to_x || from_y > to_y) {
+        LOG_D("query z%d: bbox outside map tile range", zoom);
         return MF_OK;
+    }
 
+    int32_t blocks_read = 0;
+    LOG_I("The current tile range: %d/%d@%d, %d/%d@%d", from_x, to_x, sf->blocks_width, from_y, to_y, sf->blocks_height);
     for (int64_t row = from_y; row <= to_y; row++) {
         for (int64_t col = from_x; col <= to_x; col++) {
             int64_t block = row * sf->blocks_width + col;
@@ -937,8 +980,11 @@ int mf_query(const mf_map_t *m, int32_t zoom,
             for (int64_t nb = block + 1; nb < sf->num_blocks; nb++) {
                 uint8_t nidx[5];
                 rc = f_read_at(m->fp, sf->index_start_addr + nb * 5, nidx, 5);
-                if (rc != MF_OK)
+                if (rc != MF_OK) {
+                    LOG_E("index read failed: subfile block %lld",
+                          (long long)nb);
                     return rc;
+                }
                 int64_t ne = 0;
                 for (int i = 0; i < 5; i++)
                     ne = (ne << 8) | nidx[i];
@@ -949,14 +995,19 @@ int mf_query(const mf_map_t *m, int32_t zoom,
                 }
             }
             int64_t blk_size = next_off - off;
-            if (blk_size <= 0 || blk_size > 8 * 1024 * 1024)
+            if (blk_size <= 0 || blk_size > 8 * 1024 * 1024) {
+                LOG_W("block(%lld,%lld): bad size %lld, skipped",
+                      (long long)row, (long long)col, (long long)blk_size);
                 continue;
+            }
 
             uint8_t *data = malloc((size_t)blk_size);
             if (!data)
                 return MF_ERR_LIMIT;
             rc = f_read_at(m->fp, sf->start_addr + off, data, blk_size);
             if (rc != MF_OK) {
+                LOG_E("block(%lld,%lld): read failed at offset %lld",
+                      (long long)row, (long long)col, (long long)off);
                 free(data);
                 return rc;
             }
@@ -968,10 +1019,17 @@ int mf_query(const mf_map_t *m, int32_t zoom,
                              bbox_max_lat_e6, bbox_max_lon_e6,
                              tile_lat, tile_lon, data, blk_size, frame);
             free(data);
-            if (rc != MF_OK && rc != MF_ERR_RANGE)
+            blocks_read++;
+            if (rc == MF_ERR_RANGE)
+                LOG_W("block(%lld,%lld): malformed data, rest of block skipped",
+                      (long long)row, (long long)col);
+            else if (rc != MF_OK)
                 return rc;
         }
     }
+
+    LOG_D("query z%d done: blocks=%d objs=%d water_tiles=%d",
+          zoom, blocks_read, frame->count, frame->water_tile_cnt);
 
     return MF_OK;
 }
