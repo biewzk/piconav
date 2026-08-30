@@ -180,6 +180,74 @@ double mf_tile_y_to_lat(double ty, int z)
     return atan((exp(n) - exp(-n)) / 2.0) * 180.0 / M_PI;
 }
 
+/* ---------------- Forward declarations ---------------- */
+static int f_read_at(FILE *fp, int64_t off, void *dst, int64_t n);
+
+/* ---------------- Block data LRU cache ---------------- */
+
+/* Fetch block data through LRU cache. Returns a pointer to the data
+ * (valid until the next cache call). Caller must NOT free the pointer. */
+static const uint8_t *block_cache_fetch(mf_map_t *m, int64_t subfile_start,
+                                        int64_t file_off, int64_t size)
+{
+    /* 1) Lookup: check if block is already cached */
+    for (int i = 0; i < MF_BLOCK_CACHE_SIZE; i++) {
+        mf_block_cache_entry_t *e = &m->block_cache[i];
+        if (e->file_off == file_off && e->subfile_start == subfile_start &&
+            e->size == size) {
+            e->lru_seq = ++m->lru_clock;
+            return e->data;
+        }
+    }
+
+    /* 2) Miss: find empty slot or evict LRU */
+    int slot = -1;
+    uint32_t min_seq = UINT32_MAX;
+    for (int i = 0; i < MF_BLOCK_CACHE_SIZE; i++) {
+        mf_block_cache_entry_t *e = &m->block_cache[i];
+        if (!e->data) {
+            slot = i;
+            break;
+        }
+        if (e->lru_seq < min_seq) {
+            min_seq = e->lru_seq;
+            slot = i;
+        }
+    }
+    /* Evict */
+    mf_block_cache_entry_t *e = &m->block_cache[slot];
+    free(e->data);
+    e->data = NULL;
+
+    /* 3) Load */
+    uint8_t *buf = malloc((size_t)size);
+    if (!buf)
+        return NULL;
+    if (f_read_at(m->fp, subfile_start + file_off, buf, size) != MF_OK) {
+        free(buf);
+        return NULL;
+    }
+    e->file_off = file_off;
+    e->size = size;
+    e->subfile_start = subfile_start;
+    e->data = buf;
+    e->lru_seq = ++m->lru_clock;
+    return e->data;
+}
+
+/* Read 5-byte index entry from cached index.
+ * Returns the 40-bit entry value, or -1 on error. */
+static int64_t index_read(const mf_subfile_t *sf, int64_t block)
+{
+    if (!sf->index_cache || block < 0 || block >= sf->num_blocks)
+        return -1;
+    const uint8_t *p = sf->index_cache + block * 5;
+    int64_t entry = 0;
+    for (int i = 0; i < 5; i++)
+        entry = (entry << 8) | p[i];
+    return entry;
+}
+
 /* ---------------- File reading ---------------- */
 
 static int f_read_at(FILE *fp, int64_t off, void *dst, int64_t n)
@@ -493,6 +561,17 @@ int mf_open(mf_map_t *m, const char *path)
         sf->num_blocks    = sf->blocks_width * sf->blocks_height;
         sf->index_end_addr = sf->index_start_addr + sf->num_blocks * 5;
 
+        /* Cache the entire tile index in RAM (avoids per-block I/O later) */
+        sf->index_cache = malloc((size_t)(sf->num_blocks * 5));
+        if (sf->index_cache) {
+            rc = f_read_at(m->fp, sf->index_start_addr, sf->index_cache,
+                           sf->num_blocks * 5);
+            if (rc != MF_OK) {
+                free(sf->index_cache);
+                sf->index_cache = NULL;
+            }
+        }
+
         LOG_I("subfile[%d]: zoom %d-%d base=%d offset=%lld size=%lld "
               "grid=%lldx%lld blocks=%lld origin_tile=(%lld,%lld) index@%lld",
               i, sf->zoom_min, sf->zoom_max, sf->base_zoom,
@@ -530,6 +609,17 @@ void mf_close(mf_map_t *m)
     if (m->fp) {
         fclose(m->fp);
         m->fp = NULL;
+    }
+    /* Free subfile index caches */
+    for (int i = 0; i < m->subfile_cnt; i++) {
+        free(m->subfiles[i].index_cache);
+        m->subfiles[i].index_cache = NULL;
+    }
+    /* Free block data LRU cache */
+    for (int i = 0; i < MF_BLOCK_CACHE_SIZE; i++) {
+        free(m->block_cache[i].data);
+        m->block_cache[i].data = NULL;
+        m->block_cache[i].file_off = -1;
     }
     for (int i = 0; i < m->poi_tag_cnt; i++)
         free(m->poi_tags[i]);
@@ -630,16 +720,21 @@ static int parse_block(const mf_map_t *m, const mf_subfile_t *sf,
         uint32_t p, w;
         int rc = r_vbe_u(&r, &p);
         rc |= r_vbe_u(&r, &w);
-        if (rc != MF_OK) { free(zoom_table); return rc; }
+        if (rc != MF_OK) {
+            free(zoom_table);
+            return rc;
+        }
         cum_pois += p;
         cum_ways += w;
-        zoom_table[i * 2]     = (int32_t)cum_pois;
+        zoom_table[i * 2] = (int32_t)cum_pois;
         zoom_table[i * 2 + 1] = (int32_t)cum_ways;
     }
 
     int query_row = query_zoom - sf->zoom_min;
-    if (query_row < 0) query_row = 0;
-    if (query_row >= rows) query_row = rows - 1;
+    if (query_row < 0)
+        query_row = 0;
+    if (query_row >= rows)
+        query_row = rows - 1;
     int pois_on_zoom = zoom_table[query_row * 2];
     int ways_on_zoom = zoom_table[query_row * 2 + 1];
     free(zoom_table);
@@ -917,7 +1012,7 @@ static int parse_block(const mf_map_t *m, const mf_subfile_t *sf,
  * given zoom. Reads every covering block and fills the frame with
  * POIs, ways and full-water tiles.
  */
-int mf_query(const mf_map_t *m, int32_t zoom,
+int mf_query(mf_map_t *m, int32_t zoom,
              int32_t bbox_min_lat_e6, int32_t bbox_min_lon_e6,
              int32_t bbox_max_lat_e6, int32_t bbox_max_lon_e6,
              mf_frame_t *frame)
@@ -955,14 +1050,10 @@ int mf_query(const mf_map_t *m, int32_t zoom,
         for (int64_t col = from_x; col <= to_x; col++) {
             int64_t block = row * sf->blocks_width + col;
 
-            /* Index entry */
-            uint8_t idx[5];
-            int rc = f_read_at(m->fp, sf->index_start_addr + block * 5, idx, 5);
-            if (rc != MF_OK)
-                return rc;
-            int64_t entry = 0;
-            for (int i = 0; i < 5; i++)
-                entry = (entry << 8) | idx[i];
+            /* Index entry — read from cached index */
+            int64_t entry = index_read(sf, block);
+            if (entry < 0)
+                return MF_ERR_IO;
             if (entry & MF_INDEX_WATER_BIT) {
                 frame_push_water_tile(frame,
                                       (int32_t)(sf->boundary_tile_left + col),
@@ -972,22 +1063,15 @@ int mf_query(const mf_map_t *m, int32_t zoom,
             if (off < 1 || off > sf->sub_file_size)
                 continue;
 
-            /* The block extends up to the next non-empty block: entries
-             * with offset 0 (empty or pure-water tiles) must be skipped,
-             * otherwise the size would go negative and this block would
-             * be silently dropped. */
+            /* Find next_off — scan cached index (zero I/O) */
             int64_t next_off = sf->sub_file_size;
             for (int64_t nb = block + 1; nb < sf->num_blocks; nb++) {
-                uint8_t nidx[5];
-                rc = f_read_at(m->fp, sf->index_start_addr + nb * 5, nidx, 5);
-                if (rc != MF_OK) {
+                int64_t ne = index_read(sf, nb);
+                if (ne < 0) {
                     LOG_E("index read failed: subfile block %lld",
                           (long long)nb);
-                    return rc;
+                    return MF_ERR_IO;
                 }
-                int64_t ne = 0;
-                for (int i = 0; i < 5; i++)
-                    ne = (ne << 8) | nidx[i];
                 int64_t noff = ne & MF_INDEX_OFFSET_MASK;
                 if (noff >= 1) {
                     next_off = noff;
@@ -1001,24 +1085,18 @@ int mf_query(const mf_map_t *m, int32_t zoom,
                 continue;
             }
 
-            uint8_t *data = malloc((size_t)blk_size);
+            /* Fetch block data through LRU cache */
+            const uint8_t *data = block_cache_fetch(
+                (mf_map_t *)m, sf->start_addr, off, blk_size);
             if (!data)
                 return MF_ERR_LIMIT;
-            rc = f_read_at(m->fp, sf->start_addr + off, data, blk_size);
-            if (rc != MF_OK) {
-                LOG_E("block(%lld,%lld): read failed at offset %lld",
-                      (long long)row, (long long)col, (long long)off);
-                free(data);
-                return rc;
-            }
 
             double tile_lat = mf_tile_y_to_lat((double)(sf->boundary_tile_top + row), sf->base_zoom);
             double tile_lon = mf_tile_x_to_lon((double)(sf->boundary_tile_left + col), sf->base_zoom);
 
-            rc = parse_block(m, sf, zoom, bbox_min_lat_e6, bbox_min_lon_e6,
+            int rc = parse_block(m, sf, zoom, bbox_min_lat_e6, bbox_min_lon_e6,
                              bbox_max_lat_e6, bbox_max_lon_e6,
                              tile_lat, tile_lon, data, blk_size, frame);
-            free(data);
             blocks_read++;
             if (rc == MF_ERR_RANGE)
                 LOG_W("block(%lld,%lld): malformed data, rest of block skipped",

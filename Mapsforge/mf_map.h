@@ -24,6 +24,9 @@ typedef struct {
 #define MF_INDEX_WATER_BIT (1LL << 39)
 #define MF_INDEX_OFFSET_MASK (MF_INDEX_WATER_BIT - 1)
 
+/* Block data LRU cache size (number of entries) */
+#define MF_BLOCK_CACHE_SIZE 8
+
 /* Subfile (one zoom range) */
 typedef struct {
     int32_t base_zoom;
@@ -40,7 +43,19 @@ typedef struct {
     int64_t blocks_width;
     int64_t blocks_height;
     int64_t num_blocks;
+
+    /* Cached tile index: num_blocks * 5 bytes loaded at open time */
+    uint8_t *index_cache;
 } mf_subfile_t;
+
+/* LRU block cache entry */
+typedef struct {
+    int64_t  file_off;        /* File offset (key); -1 = empty */
+    int64_t  size;            /* Data size */
+    int64_t  subfile_start;   /* Subfile start_addr (to disambiguate) */
+    uint8_t *data;            /* malloc'd block data */
+    uint32_t lru_seq;         /* Access sequence for LRU */
+} mf_block_cache_entry_t;
 
 /* Map file handle */
 typedef struct {
@@ -65,6 +80,10 @@ typedef struct {
     int32_t      zoom_max;
     int32_t      subfile_cnt;
     mf_subfile_t subfiles[MF_MAX_SUBFILES];
+
+    /* Block data LRU cache (shared across subfiles) */
+    mf_block_cache_entry_t block_cache[MF_BLOCK_CACHE_SIZE];
+    uint32_t lru_clock;
 } mf_map_t;
 
 /* Single object in a render-query result */
@@ -129,7 +148,7 @@ void mf_close(mf_map_t *m);
  * Returns MF_OK or an error code. bbox is the micro-degree rectangle
  * to query, zoom is the query zoom level.
  */
-int mf_query(const mf_map_t *m, int32_t zoom,
+int mf_query(mf_map_t *m, int32_t zoom,
              int32_t bbox_min_lat_e6, int32_t bbox_min_lon_e6,
              int32_t bbox_max_lat_e6, int32_t bbox_max_lon_e6,
              mf_frame_t *frame);
