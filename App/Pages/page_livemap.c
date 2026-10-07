@@ -13,7 +13,7 @@
 
 /* Map file path; override with the MF_MAP environment variable. */
 #ifndef MF_MAP_PATH
-#define MF_MAP_PATH "../resources/monaco.map"
+#define MF_MAP_PATH "../resources/macau.map"
 #endif
 
 /* Pan step (px): single tap / long-press repeat */
