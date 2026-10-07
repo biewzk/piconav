@@ -134,7 +134,10 @@ static int r_consume_tag_value(mf_reader_t *r, const char *tag)
     }
 }
 
-/* Read n tag IDs (VBE-U) and consume their variable values. */
+/* Read n tag IDs (VBE-U), then the variable values of those tags.
+ * Mapsforge v5 stores all tag IDs first, followed by the %b/%i/%f/%h/%s
+ * values in tag order — consuming a value right after its own ID
+ * desynchronizes parsing for ways that use variable tags. */
 static int r_tags(mf_reader_t *r, int n, const char *const *table, int32_t table_len,
                   int32_t *ids, int32_t *out_n)
 {
@@ -147,7 +150,9 @@ static int r_tags(mf_reader_t *r, int n, const char *const *table, int32_t table
         if ((int32_t)id >= table_len)
             return MF_ERR_RANGE;
         ids[cnt++] = (int32_t)id;
-        rc = r_consume_tag_value(r, table[id]);
+    }
+    for (int i = 0; i < cnt; i++) {
+        int rc = r_consume_tag_value(r, table[ids[i]]);
         if (rc != MF_OK)
             return rc;
     }
