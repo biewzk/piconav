@@ -787,6 +787,13 @@ int mf_view_project(const mf_view_t *v, int32_t lat_e6, int32_t lon_e6, lv_point
     double y_ctr = (1.0 - log(tan(ctr_r) + 1.0 / cos(ctr_r)) / M_PI) / 2.0;
     double y = (y_lat - y_ctr) * 256.0 * z + (double)v->h / 2.0;
 
+    /* lv_coord_t is int16 (LV_USE_LARGE_COORD 0): far points (e.g. the map
+     * bbox corners at high zoom) would wrap around into bogus on-screen
+     * coordinates. Clamp to a safe off-screen range instead — the
+     * on-screen test below only cares about the +/-8 px margin. */
+    const double lim = 30000.0;
+    if (x < -lim) x = -lim; else if (x > lim) x = lim;
+    if (y < -lim) y = -lim; else if (y > lim) y = lim;
     p->x = (lv_coord_t)llround(x);
     p->y = (lv_coord_t)llround(y);
     if (p->x < -8 || p->y < -8 || p->x > v->w + 8 || p->y > v->h + 8)
