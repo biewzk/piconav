@@ -16,6 +16,17 @@
 #define MF_MAP_PATH "../resources/macau.map"
 #endif
 
+/* Map chosen through the picker page; takes precedence over MF_MAP_PATH,
+ * but MF_MAP (sim/dev override) still wins. */
+static char s_map_path[256];
+
+void page_livemap_set_map(const char *path)
+{
+    if (!path || !path[0])
+        return;
+    snprintf(s_map_path, sizeof(s_map_path), "%s", path);
+}
+
 /* Pan step (px): single tap / long-press repeat */
 #define PAN_STEP_PX      32
 #define PAN_REPEAT_PX    24
@@ -177,8 +188,8 @@ static void livemap_create(page_t *self)
     lv_obj_align(d->hint, LV_ALIGN_BOTTOM_RIGHT, -2, -2);
 
     const char *path = getenv("MF_MAP");
-    if (!path)
-        path = MF_MAP_PATH;
+    if (!path || !path[0])
+        path = s_map_path[0] ? s_map_path : MF_MAP_PATH;
 
     int rc = mf_open(&d->map, path);
     d->map_ok = (rc == MF_OK);

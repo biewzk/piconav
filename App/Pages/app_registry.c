@@ -1,10 +1,10 @@
 #include "app_registry.h"
-#include "page_livemap.h"
+#include "page_mapselect.h"
 #include "page_dialplate.h"
 #include "page_settings.h"
 
 static app_entry_t s_apps[] = {
-    { "地图",   "M", 0x00C2FF, &page_livemap   },
+    { "地图",   "M", 0x00C2FF, &page_mapselect },
     { "行车",   "D", 0x00FF88, &page_dialplate },
     { "设置",   "S", 0xFFAA00, &page_settings  },
 };

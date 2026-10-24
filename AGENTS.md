@@ -20,9 +20,10 @@ SDL_VIDEODRIVER=dummy SIM_AUTOQUIT_MS=1500 \
 
 - Check rendering by inspecting the dumped PPM.
 - Scripted key input: `SIM_KEY="right,right,enter,down,back"` + `SIM_KEY_MS=300`.
-- Map/view selection: `MF_MAP=../resources/macau.map`, optional `SIM_LAT/SIM_LON/SIM_ZOOM`.
+- Map/view selection: `MF_MAP=../resources/macau.map` (single file, wins over everything), `MF_MAP_DIR=../resources` (directory scanned by the map picker page), optional `SIM_LAT/SIM_LON/SIM_ZOOM`.
 - Debug flags: `MF_DEBUG=1` (frame stats), `MF_NOCOAST=1` (skip coastline flood fill), `LOG_CONSOLE=0`.
 - Sim logs mirror to stderr and host syslog (`/var/log/syslog`).
+- Device maps live in `/data/maps` (data partition, UBIFS via `S41data`); the drawer's map entry opens `page_mapselect` which lists that directory, persists the choice to config key `map.selected` and opens it in `page_livemap` (`page_livemap_set_map()`). In sim `/dev/config` is absent — the picker still works but persistence is skipped (logged as a warning).
 
 ## Architecture in one breath
 

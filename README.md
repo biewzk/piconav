@@ -98,10 +98,13 @@ cd sim
 - **亚洲/中国**：https://download.mapsforge.org/maps/v5/asia/china/
 - **按字母排序浏览**：在 URL 后追加 `?C=S;O=A`
 
-下载后将 `.map` 文件放入 `resources/` 目录，通过环境变量 `MF_MAP` 指定路径：
+**真机**：`.map` 文件放入 data 分区的 `/data/maps/` 目录（由 `S41data` 以 UBIFS 挂载，见根仓库 AGENTS.md）。抽屉里打开"地图"会先进入**地图选择页**，列出该目录下全部 `.map` 文件，上下键选择、OK 打开；选择会持久化到 config（`map.selected`），下次进入选择页自动预选。sim 中不存在的路径用 `MF_MAP_DIR` 指定扫描目录。
+
+**模拟器**：`.map` 文件放入 `resources/` 后二选一——直接指定单个文件（`MF_MAP`），或指定选择页扫描目录（`MF_MAP_DIR`）：
 
 ```bash
 MF_MAP=../resources/china.map ./build_sim/bin/pico_nav_sim
+MF_MAP_DIR=../resources ./build_sim/bin/pico_nav_sim   # 经选择页挑选
 ```
 
 也可以从 [OpenStreetMap 数据导出](https://download.geofabrik.de/) 获取 `.osm` 文件，再用 [Mapsforge Map Writer](https://github.com/mapsforge/mapsforge/blob/master/docs/Getting-Started-Map-Writer.md) 转换为 `.map` 格式。
