@@ -1,6 +1,7 @@
 #include "app.h"
 #include "Utils/page_manager.h"
 #include "Utils/gps_service.h"
+#include "Utils/config_watcher.h"
 #include "Utils/log.h"
 #include "Pages/page_home.h"
 #include "../HAL/hal.h"
@@ -42,6 +43,7 @@ void app_init(void)
         LOG_W("hal_gps_init failed, GPS unavailable");
 
     gps_service_init(s_mc);
+    config_watcher_init(s_mc);
 
     page_manager_push(&page_home);
     LOG_I("pushed home page (depth=%d)", page_manager_depth());

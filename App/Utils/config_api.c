@@ -29,6 +29,28 @@ struct config_handle {
 
 static struct config_handle g_cfg;
 
+/* Snapshot of the raw payload the in-memory root was last built from;
+ * config_changed() diffs the driver payload against it. */
+static char   *s_snap;
+static ssize_t s_snap_len;
+
+static void snap_set(const char *data, ssize_t len)
+{
+	char *p;
+
+	if (len < 0)
+		len = 0;
+	p = malloc((size_t)len + 1);
+	if (!p)
+		return;   /* keep the old snapshot; the probe may report a
+			     spurious change once, reloading is harmless */
+	memcpy(p, data, (size_t)len);
+	p[len] = '\0';
+	free(s_snap);
+	s_snap = p;
+	s_snap_len = len;
+}
+
 /* ------------------------------------------------------------------ */
 /* Internal: JSON helpers                                               */
 /* ------------------------------------------------------------------ */
@@ -65,6 +87,7 @@ int config_init(void)
 		c->dirty = 0;
 		/* Driver not loaded / partition not ready: keep an empty
 		 * config and fall back to defaults. */
+		snap_set("", 0);
 		return 0;
 	}
 
@@ -83,6 +106,7 @@ int config_init(void)
 		c->root = cJSON_CreateObject();
 		c->dirty = 0;
 		free(buf);
+		snap_set("", 0);
 		return 0;
 	}
 
@@ -97,10 +121,14 @@ int config_init(void)
 			c->root = cJSON_CreateObject();
 			c->dirty = 0;
 			free(buf);
+			/* Snapshot the raw bytes anyway so the change probe
+			 * does not re-fire on a payload that never parses. */
+			snap_set(buf, got);
 			return 0;
 		}
 		c->root = parsed;
 		c->dirty = 0;
+		snap_set(buf, got);
 	}
 
 	free(buf);
@@ -286,16 +314,22 @@ int config_save(void)
 	 * The /dev/config char device does not support lseek, and the
 	 * driver ignores the file offset anyway. */
 	w = write(c->fd, text, (size_t)n);
-	free(text);
 
-	if (w != n)
+	if (w != n) {
+		free(text);
 		return (w < 0) ? -errno : -EIO;
+	}
 
-	if (ioctl(c->fd, CONFIG_IOC_COMMIT, 0) < 0)
+	if (ioctl(c->fd, CONFIG_IOC_COMMIT, 0) < 0) {
+		free(text);
 		return -errno;
+	}
 
-	/* Clear dirty only after a successful commit */
+	/* Clear dirty only after a successful commit; the snapshot moves
+	 * to the committed payload so config_changed() sees no drift. */
 	c->dirty = 0;
+	snap_set(text, n);
+	free(text);
 	return 0;
 }
 
@@ -343,4 +377,43 @@ int config_format(void)
 int config_is_dirty(void)
 {
 	return g_cfg.dirty;
+}
+
+int config_changed(void)
+{
+	char *cur;
+	ssize_t got;
+	int changed;
+	int fd;
+
+	if (g_cfg.fd < 0)
+		return 0;
+
+	/* A transient descriptor: the char device only serves reads at
+	 * offset 0 and the shared g_cfg fd has already been read past
+	 * its payload. */
+	cur = malloc(CONFIG_API_MAX_DATA);
+	if (!cur)
+		return -ENOMEM;
+
+	fd = open(CONFIG_API_DEV_PATH, O_RDONLY);
+	if (fd < 0) {
+		free(cur);
+		return 0;   /* device gone: report "no change" */
+	}
+	got = read(fd, cur, CONFIG_API_MAX_DATA);
+	close(fd);
+
+	if (got < 0) {
+		/* -ENODATA: partition empty; changed only if the snapshot
+		 * still holds a payload. */
+		changed = s_snap_len != 0;
+		free(cur);
+		return changed;
+	}
+
+	changed = (got != s_snap_len) ||
+		  (got > 0 && memcmp(cur, s_snap, (size_t)got) != 0);
+	free(cur);
+	return changed;
 }

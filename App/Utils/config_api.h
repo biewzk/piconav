@@ -73,6 +73,13 @@ int config_format(void);
 /* Whether config has been modified but not yet saved */
 int config_is_dirty(void);
 
+/* Cheap external-change probe: reads the driver payload (staged if
+ * present, else committed) and compares it against the snapshot taken
+ * by the last config_init()/config_save(). Does not touch the
+ * in-memory root; call config_init() to reload when this returns 1.
+ * Returns 1 = changed, 0 = unchanged or device unavailable, <0 = error. */
+int config_changed(void);
+
 #ifdef __cplusplus
 }
 #endif
