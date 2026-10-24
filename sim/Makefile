@@ -28,6 +28,8 @@ BIN_DIR    = $(BUILD_DIR)/bin
 # Simulator sources: app framework + sim HAL + SDL entry
 MAINSRC = main_sim.c \
           hal_keys_sdl.c \
+          hal_gps_nmea.c \
+          ../HAL/nmea.c \
           $(wildcard ../App/*.c) \
           $(wildcard ../App/Utils/*.c) \
           $(wildcard ../App/Pages/*.c) \

@@ -35,29 +35,70 @@ int hal_should_quit(void)
     return 0;
 }
 
-/* Headless test: inject one key event (goes through hal_key_read ->
- * bus dispatch, same path as on-device).
- * SIM_KEY="right" or "left/up/down/enter/back". */
-static void sim_inject_key(const char *name)
+/* Headless test: key name -> SDL keycode for the scheduled injector
+ * below (events go through hal_key_read -> bus dispatch, same path as
+ * on-device). */
+static SDL_Keycode inject_name_to_key(const char *name)
 {
-    SDL_Event ev = {0};
     static const struct { const char *n; SDL_Keycode k; } map[] = {
         { "up", SDLK_UP }, { "down", SDLK_DOWN }, { "left", SDLK_LEFT },
         { "right", SDLK_RIGHT }, { "enter", SDLK_RETURN }, { "back", SDLK_ESCAPE },
     };
-    SDL_Keycode k = SDLK_UNKNOWN;
     for (unsigned i = 0; i < sizeof(map) / sizeof(map[0]); i++)
-        if (strcmp(map[i].n, name) == 0) { k = map[i].k; break; }
-    if (k == SDLK_UNKNOWN) {
-        LOG_E("SIM_KEY unknown: %s", name);
+        if (strcmp(map[i].n, name) == 0)
+            return map[i].k;
+    return SDLK_UNKNOWN;
+}
+
+/*
+ * Scheduled key injection for headless tests. Events are pushed as SDL
+ * events from an lv_timer DURING app_run (not before it), because the
+ * page manager's long-press detection only advances while
+ * lv_timer_handler runs. SIM_KEY tokens: "up/down/left/right/enter/
+ * back", optionally ":<hold_ms>" (default 60 ms = short click; e.g.
+ * "enter:800" holds ENTER for 800 ms and exercises the long-press
+ * gesture). Consecutive tokens are spaced SIM_KEY_MS apart.
+ */
+#define INJECT_MAX   64
+#define INJECT_T0_MS 300   /* settle time before the first key */
+
+typedef struct {
+    uint32_t   at_ms;   /* absolute time from injection start */
+    SDL_Keycode key;
+    int        press;
+} inject_step_t;
+
+static inject_step_t s_isteps[INJECT_MAX];
+static int s_istep_n, s_istep_i;
+static uint32_t s_inject_t0 = UINT32_MAX;
+
+static void inject_step_add(uint32_t at, SDL_Keycode k, int press)
+{
+    if (s_istep_n >= INJECT_MAX)
         return;
+    s_isteps[s_istep_n].at_ms = at;
+    s_isteps[s_istep_n].key = k;
+    s_isteps[s_istep_n].press = press;
+    s_istep_n++;
+}
+
+static void inject_timer_cb(lv_timer_t *timer)
+{
+    if (s_inject_t0 == UINT32_MAX)
+        s_inject_t0 = SDL_GetTicks();
+    uint32_t now = SDL_GetTicks() - s_inject_t0;
+
+    while (s_istep_i < s_istep_n && s_isteps[s_istep_i].at_ms <= now) {
+        inject_step_t *s = &s_isteps[s_istep_i++];
+        SDL_Event ev = {0};
+        ev.type = s->press ? SDL_KEYDOWN : SDL_KEYUP;
+        ev.key.keysym.sym = s->key;
+        SDL_PushEvent(&ev);
+        LOG_I("sim: injected %s '%s' @%ums", s->press ? "press" : "release",
+              SDL_GetKeyName(s->key), (unsigned)now);
     }
-    ev.type = SDL_KEYDOWN;
-    ev.key.keysym.sym = k;
-    SDL_PushEvent(&ev);
-    ev.type = SDL_KEYUP;
-    SDL_PushEvent(&ev);
-    LOG_I("sim: injected key '%s'", name);
+    if (s_istep_i >= s_istep_n)
+        lv_timer_del(timer);
 }
 
 /* Headless test: dump the framebuffer to PPM before auto-exit,
@@ -70,6 +111,14 @@ static void sim_dump_ppm(lv_disp_t *disp, const char *path)
     lv_color_t *p = db->buf1;
     if (!p)
         return;
+
+    /* Force a full-screen refresh first: with partial rendering, buf1 only
+     * holds the last refreshed area at offset 0, so a raw dump of it would
+     * show stale pixels everywhere else. */
+    if (lv_scr_act()) {
+        lv_obj_invalidate(lv_scr_act());
+        lv_refr_now(disp);
+    }
 
     FILE *f = fopen(path, "w");
     if (!f)
@@ -157,22 +206,34 @@ int main(int argc, char *argv[])
 
     const char *key = getenv("SIM_KEY");
     if (key) {
-        char buf[64];
+        char buf[128];
         strncpy(buf, key, sizeof(buf) - 1);
         buf[sizeof(buf) - 1] = 0;
-        char *tok = strtok(buf, ",");
-        uint32_t base = SDL_GetTicks();
         uint32_t interval_ms = 400;
         const char *iv = getenv("SIM_KEY_MS");
         if (iv)
             interval_ms = (uint32_t)strtoul(iv, NULL, 10);
+
+        uint32_t t = INJECT_T0_MS;
+        char *tok = strtok(buf, ",");
         while (tok) {
-            while ((int)(SDL_GetTicks() - base) < (int)interval_ms)
-                SDL_Delay(10);
-            sim_inject_key(tok);
-            base = SDL_GetTicks();
+            uint32_t hold_ms = 60;
+            char *colon = strchr(tok, ':');
+            if (colon) {
+                *colon = 0;
+                hold_ms = (uint32_t)strtoul(colon + 1, NULL, 10);
+            }
+            SDL_Keycode k = inject_name_to_key(tok);
+            if (k != SDLK_UNKNOWN) {
+                inject_step_add(t, k, 1);
+                inject_step_add(t + hold_ms, k, 0);
+            } else {
+                LOG_E("SIM_KEY unknown: %s", tok);
+            }
+            t += hold_ms + interval_ms;
             tok = strtok(NULL, ",");
         }
+        lv_timer_create(inject_timer_cb, 20, NULL);
     }
 
     app_run();

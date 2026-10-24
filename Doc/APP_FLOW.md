@@ -21,7 +21,8 @@ flowchart TB
     LOOP -- "hal_should_quit()=1<br/>(模拟器关窗口/autoquit)" --> E([退出])
 ```
 
-> 注：当前 HAL 未接入 GPS，主循环只轮询按键，无 GPS 读取/发布。
+> 注：主循环每轮还会调用 `hal_gps_read()`，解析成功时把快照发布到 `MSG_GPS`
+> （真机读 `/dev/ttyS3` 的 NMEA，模拟器回放 `SIM_NMEA` 文件）。
 
 ## 2. 页面导航 (主页 + App 模型)
 

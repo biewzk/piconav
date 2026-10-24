@@ -2,6 +2,7 @@
 #define APP_H
 
 #include "Utils/msg_center.h"
+#include "../HAL/hal.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -9,6 +10,10 @@ extern "C" {
 
 /* Global message center, created by app_init(). */
 msg_center_t *app_msg_center(void);
+
+/* Latest GPS snapshot (updated by app_run, published on MSG_GPS).
+ * Pages read it on_show to show data before the next NMEA sentence. */
+const gps_data_t *app_gps(void);
 
 /*
  * Initialize the application framework: message center,

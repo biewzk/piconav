@@ -9,17 +9,77 @@ static page_t *s_stack[PAGE_STACK_MAX];
 static int s_depth;
 static msg_sub_t *s_key_sub;
 
+/*
+ * ENTER gesture layer: the hardware has only five keys (up/down/left/
+ * right/enter), so ENTER doubles as the "back"/secondary key via a
+ * long press. The raw press is withheld; pages receive:
+ *   {ENTER, press=1, long=0}  - short click (delivered on release)
+ *   {ENTER, press=1, long=1}  - long press (at the threshold)
+ *   {ENTER, press=0, long=1}  - end of a long press (stop repeats)
+ * Arrows and BACK keep raw press/release semantics (pages implement
+ * hold-to-repeat themselves, like the map pan).
+ */
+#define ENTER_LONGPRESS_MS 500
+
+static lv_timer_t *s_enter_timer;   /* long-press detection timer */
+static int s_enter_down;            /* ENTER currently held */
+
+/* Forward a key event to the top page's on_key handler. */
+static void page_deliver(const key_event_t *ev)
+{
+    page_t *top = page_manager_top();
+    LOG_D("dispatch key id=%d press=%d long=%d -> top=%s (depth=%d)",
+          ev->id, ev->is_press, ev->is_long, top ? top->name : "(null)", s_depth);
+    if (top && top->ops->on_key)
+        top->ops->on_key(top, ev);
+}
+
+/* ENTER has been held past the threshold: deliver the long-press gesture. */
+static void enter_long_cb(lv_timer_t *timer)
+{
+    s_enter_timer = NULL;
+    lv_timer_del(timer);
+    if (!s_enter_down)
+        return;
+
+    key_event_t ev = { .id = KEY_BTN_ENTER, .is_press = 1, .is_long = 1 };
+    page_deliver(&ev);
+}
+
 /* Dispatch MSG_KEY events to the top page's on_key handler. */
 static void page_key_handler(msg_topic_t topic, const void *data, void *user)
 {
     (void)topic;
     (void)user;
-    const key_event_t *ev = data;
-    page_t *top = page_manager_top();
-    LOG_D("dispatch key id=%d press=%d -> top=%s (depth=%d)",
-          ev->id, ev->is_press, top ? top->name : "(null)", s_depth);
-    if (top && top->ops->on_key)
-        top->ops->on_key(top, ev);
+
+    key_event_t ev = *(const key_event_t *)data;
+
+    if (ev.id == KEY_BTN_ENTER && !ev.is_long) {
+        if (ev.is_press) {
+            /* Withhold the raw press; start/restart the long-press timer. */
+            s_enter_down = 1;
+            if (s_enter_timer)
+                lv_timer_reset(s_enter_timer);
+            else
+                s_enter_timer = lv_timer_create(enter_long_cb,
+                                                ENTER_LONGPRESS_MS, NULL);
+        } else {
+            s_enter_down = 0;
+            if (s_enter_timer) {
+                /* Released before the threshold: this was a short click. */
+                lv_timer_del(s_enter_timer);
+                s_enter_timer = NULL;
+                ev.is_press = 1;
+            } else {
+                /* Release ending a long press (stops hold-to-repeat). */
+                ev.is_long = 1;
+            }
+            page_deliver(&ev);
+        }
+        return;
+    }
+
+    page_deliver(&ev);
 }
 
 /*

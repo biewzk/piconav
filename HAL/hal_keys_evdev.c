@@ -121,5 +121,6 @@ int hal_key_read(key_event_t *ev)
 
     ev->id       = (key_id_t)id;
     ev->is_press = (ie.value != 0) ? 1 : 0;   /* value: 0=release, 1=press, 2=autorepeat */
+    ev->is_long  = 0;                         /* long-press is a page_manager gesture */
     return 1;
 }

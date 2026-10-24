@@ -12,6 +12,7 @@ extern "C" {
 typedef enum {
     MSG_KEY = 0,       /* key_event_t*: key press/release */
     MSG_CONFIG_CHANGED, /* NULL: persisted config changed via config_save */
+    MSG_GPS,           /* gps_data_t*: fresh NMEA snapshot from the HAL */
     MSG_COUNT
 } msg_topic_t;
 

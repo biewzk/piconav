@@ -119,6 +119,17 @@ chmod +x demo
 
 程序打开 `/dev/fb0` 并进入 `app_run()` 主循环，持续驱动 LVGL 刷新界面。
 
+### 真机五键操作模型
+
+真机只有 5 个 ADC 按键（上/下/左/右/中），没有 BACK 键。框架层（`page_manager.c`）把**中键做成长按手势**补齐全部操作：
+
+| 操作 | 按键 |
+|------|------|
+| 列表/面板导航 | 上/下/左/右 |
+| 确认 / 打开 / 放大 | 中键**短按**（松开时触发） |
+| 返回上一页 | 中键**长按 ≥500ms**（列表页也可用左键） |
+| 地图缩小 / 退出地图 | 中键**长按**（连续缩小；已到最小层时长按 = 退出地图页） |
+
 ### 模拟器
 
 ```bash
@@ -134,8 +145,8 @@ cd sim
 | `↓` / `s` | KEY_BTN_DOWN |
 | `←` / `a` | KEY_BTN_LEFT |
 | `→` / `d` | KEY_BTN_RIGHT |
-| `Enter` / `Space` / `+` | KEY_BTN_ENTER |
-| `Esc` / `-` | KEY_BTN_BACK |
+| `Enter` / `Space` / `+` | KEY_BTN_ENTER（按住 ≥500ms = 长按手势，与真机一致） |
+| `Esc` / `-` | KEY_BTN_BACK（仅模拟器；真机无此键） |
 | 鼠标滚轮 | 上滚 = ENTER（放大），下滚 = BACK（缩小） |
 | 鼠标左键拖动 | 按拖动方向连发方向键（平移地图） |
 | 关闭窗口 | 退出程序 |
@@ -220,6 +231,7 @@ App/
   3. `lv_timer_handler()` 驱动 LVGL 刷新；
   4. `hal_delay_ms(5)` 节流（~200Hz 轮询）。
 - `app_msg_center()`：暴露全局消息中心实例，供页面/订阅者使用。
+- `app_gps()`：返回最近一次 GPS 快照，页面 `on_show` 时先渲染它，不用等下一句 NMEA。
 
 ## 应用框架说明
 
@@ -291,11 +303,24 @@ page_ops_t {
 | 接口 | 真机 (HAL/) | 模拟器 (sim/) |
 |------|------------|--------------|
 | `hal_key_init/read` | `hal_keys_evdev.c` (evdev) | `hal_keys_sdl.c` (SDL 键盘) |
-| `hal_gps_init/read` | `hal_gps_stub.c` (占位) | `hal_gps_nmea.c` (NMEA 回放) |
+| `hal_gps_init/read` | `hal_gps_uart.c` (串口 NMEA) | `hal_gps_nmea.c` (NMEA 回放) |
 | `hal_delay_ms/tick_get` | 各自实现 | SDL_Delay/SDL_GetTicks |
 | `hal_should_quit` | 恒 0 | 窗口关闭/autoquit 置 1 |
 
-`gps_data_t` 结构: `fix / lat / lon / speed_kmh / alt_m / sats`。
+NMEA-0183 解析器（GGA/RMC）在 `HAL/nmea.c`，两端的 HAL 共用。
+
+`gps_data_t` 结构: `fix / sats / hdop / lat / lon / alt_m / speed_kmh / course_deg / utc / stamp_ms`。
+
+#### GPS（BN-180）
+
+- **接线**：模块 4 线（GND/TX/RX/VCC）→ 排针 `38`(GND) / `39`(VSYS 5V) / `20`(UART3_RX) / `19`(UART3_TX)。UART4 不可用：其 M1 引脚 `GPIO1_C4/C5` 已被 ST7789 的 DC/RES 占用；UART2 是内核调试串口。
+- **内核**：`rv1103g-luckfox-pico-plus.dts` 里 `&uart3 { status = "okay"; }`（pinctrl `uart3m1_xfer` 在 `rv1103-luckfox-pico-ipc.dtsi` 已配好），设备节点 `/dev/ttyS3`，9600 8N1。
+- **真实设备**：`hal_gps_uart.c` 打开 `/dev/ttyS3`（`GPS_DEV`/`GPS_BAUD` 可覆盖），节点不存在时每 5 s 重试，不阻塞启动。
+- **模拟器**：`SIM_NMEA=<file>` 回放（默认 `sample.nmea`），`SIM_GPS_MS` 控制每条语句间隔（默认 100 ms）。
+- **消费方**：`app_run()` 把快照发布到 `MSG_GPS`，`app_gps()` 返回最近一次快照；`page_dialplate`（车速/里程/行驶时间）与 `page_livemap`（GPS 跟随，手动平移即退出跟随）在 `on_show` 订阅。
+
+> 注意：`lv_conf.h` 里 `LV_SPRINTF_USE_FLOAT 0`，`lv_label_set_text_fmt()` **不支持 `%f`**
+> （会输出乱码/残字）。浮点数先用 libc `snprintf()` 格式化到缓冲区，再 `lv_label_set_text()`。
 
 > 注意：`key_id_t` 枚举使用 `KEY_BTN_*` 前缀命名，避免与 Linux 头文件
 > `linux/input-event-codes.h` 中的 `KEY_*` 宏（`KEY_UP=103`、`KEY_ENTER=28` 等）
@@ -329,7 +354,8 @@ LOG_D("...", ...);   // 调试 (DEBUG)
 | `App/app.c` | 框架各组件初始化、按键/GPS 事件 |
 | `Utils/page_manager.c` | 页面 push/pop/replace 与栈满告警 |
 | `HAL/hal_keys_evdev.c` | 设备扫描/打开/失败 |
-| `HAL/hal_gps_stub.c` | GPS 未接入提示 |
+| `HAL/hal_gps_uart.c` | 串口打开/重连、定位获取/丢失 |
+| `HAL/nmea.c` | （无日志，纯解析） |
 
 ### 主循环 app_run()
 

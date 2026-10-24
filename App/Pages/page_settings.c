@@ -156,7 +156,7 @@ static void settings_create(page_t *self)
     settings_paint(d);
 
     lv_obj_t *hint = lv_label_create(scr);
-    lv_label_set_text(hint, "UP/DOWN:Select  OK:Confirm  LEFT:Back");
+    lv_label_set_text(hint, "OK:Confirm HOLD OK:Back");
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x555555), 0);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -12);
@@ -196,8 +196,9 @@ static void settings_on_hide(page_t *self)
 }
 
 /*
- * Key handling: UP/DOWN moves the selection, LEFT pops the page,
- * ENTER edits/applies the selected setting item and persists it.
+ * Key handling: UP/DOWN moves the selection, ENTER edits/applies the
+ * selected setting item and persists it, holding ENTER (or LEFT/BACK)
+ * pops the page.
  */
 static void settings_on_key(page_t *self, const key_event_t *ev)
 {
@@ -216,10 +217,12 @@ static void settings_on_key(page_t *self, const key_event_t *ev)
         break;
     case KEY_BTN_LEFT:
     case KEY_BTN_BACK:
-        page_manager_pop();
-        break;
     case KEY_BTN_ENTER:
-        settings_apply(d, d->sel);
+        /* The device has no BACK key: holding OK is the back gesture. */
+        if (ev->id == KEY_BTN_ENTER && !ev->is_long)
+            settings_apply(d, d->sel);
+        else
+            page_manager_pop();
         break;
     default:
         break;

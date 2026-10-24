@@ -169,7 +169,7 @@ static void mapselect_create(page_t *self)
     }
 
     lv_obj_t *hint = lv_label_create(scr);
-    lv_label_set_text(hint, "UP/DOWN:Select  OK:Open  BACK:Cancel");
+    lv_label_set_text(hint, "OK:Open HOLD OK:Back");
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x555555), 0);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
@@ -221,7 +221,7 @@ static void mapselect_on_hide(page_t *self)
 
 /*
  * Key handling: UP/DOWN move the selection, ENTER opens the selected
- * map, LEFT/BACK cancel back to the previous page.
+ * map, holding ENTER (or LEFT/BACK) cancels back to the previous page.
  */
 static void mapselect_on_key(page_t *self, const key_event_t *ev)
 {
@@ -244,11 +244,14 @@ static void mapselect_on_key(page_t *self, const key_event_t *ev)
         break;
     case KEY_BTN_LEFT:
     case KEY_BTN_BACK:
-        page_manager_pop();
-        break;
     case KEY_BTN_ENTER:
-        if (d->count > 0)
-            mapselect_open(d);
+        /* The device has no BACK key: holding OK is the back gesture. */
+        if (ev->id == KEY_BTN_ENTER && !ev->is_long) {
+            if (d->count > 0)
+                mapselect_open(d);
+        } else {
+            page_manager_pop();
+        }
         break;
     default:
         break;

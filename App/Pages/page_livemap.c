@@ -46,7 +46,17 @@ typedef struct {
     int32_t    pan_dx;       /* Repeat offset per tick */
     int32_t    pan_dy;
     key_id_t   pan_key;      /* Currently held key (KEY_NUM = none) */
+    lv_timer_t *zoom_timer;  /* Long-ENTER zoom-out repeat timer */
+    msg_sub_t *gps_sub;      /* MSG_GPS subscription while visible */
+    uint8_t    follow;       /* 1 = recenter on the GPS fix */
+    uint32_t   follow_ms;    /* Last auto-recenter (rate limit) */
 } livemap_priv_t;
+
+/* Auto-recenter policy: only redraw once the fix left a small box around
+ * the viewport center, and at most once per second (a full map frame on
+ * this SoC takes a visible amount of time). */
+#define FOLLOW_DEAD_PX 24
+#define FOLLOW_MIN_MS  900
 
 /* Translate a Mapsforge return code into a human-readable string. */
 static const char *mferr_str(int rc)
@@ -87,11 +97,45 @@ static void livemap_redraw(livemap_priv_t *d)
     mf_render(&d->map, &d->view, &frame, d->canvas);
 
     uint32_t dt = hal_tick_get() - t0;
-    lv_label_set_text_fmt(d->info, "z%d %d obj %ums",
-                          (int)d->view.zoom, (int)frame.count, (unsigned)dt);
+    lv_label_set_text_fmt(d->info, "z%d %d obj %ums%s",
+                          (int)d->view.zoom, (int)frame.count, (unsigned)dt,
+                          d->follow ? " GPS" : "");
     lv_obj_invalidate(d->canvas);
 
     mf_frame_free(&frame);
+}
+
+/*
+ * MSG_GPS handler: keep the fix in the middle of the map while following.
+ * Frames are only re-rendered once the receiver left a small box around
+ * the center (and at most once per FOLLOW_MIN_MS), because a full
+ * Mapsforge frame is not cheap on this SoC.
+ */
+static void livemap_on_gps(msg_topic_t topic, const void *data, void *user)
+{
+    (void)topic;
+    page_t *self = user;
+    livemap_priv_t *d = self ? self->user : NULL;
+    const gps_data_t *g = data;
+
+    if (!d || !d->map_ok || !g || !g->fix || !d->follow)
+        return;
+
+    lv_point_t p;
+    mf_view_project(&d->view, (int32_t)(g->lat * 1e6), (int32_t)(g->lon * 1e6), &p);
+
+    int32_t dx = (int32_t)p.x - APP_SCR_HOR / 2;
+    int32_t dy = (int32_t)p.y - APP_SCR_VER / 2;
+    if (dx * dx + dy * dy <= FOLLOW_DEAD_PX * FOLLOW_DEAD_PX)
+        return;
+
+    uint32_t now = hal_tick_get();
+    if (d->follow_ms && now - d->follow_ms < FOLLOW_MIN_MS)
+        return;
+    d->follow_ms = now;
+
+    mf_view_init(&d->view, d->view.zoom, g->lat, g->lon, APP_SCR_HOR, APP_SCR_VER);
+    livemap_redraw(d);
 }
 
 /* Long-press repeat: pan by the repeat offset each timer tick. */
@@ -125,6 +169,12 @@ static void livemap_pan_start(livemap_priv_t *d, key_id_t key, int32_t dx, int32
         d->pan_dy = dy > 0 ? PAN_REPEAT_PX : (dy < 0 ? -PAN_REPEAT_PX : 0);
         d->pan_timer = lv_timer_create(livemap_pan_timer_cb, PAN_REPEAT_MS, d);
     }
+    /* Manual panning takes the map off the fix: stop following until the
+     * page is reopened. */
+    if (d->follow) {
+        d->follow = 0;
+        LOG_I("livemap: GPS follow off (manual pan)");
+    }
     mf_view_pan(&d->view, dx, dy);
     livemap_redraw(d);
 }
@@ -147,6 +197,33 @@ static void livemap_zoom_out(livemap_priv_t *d)
     }
 }
 
+/* Stop the zoom-out repeat timer. */
+static void livemap_zoom_stop(livemap_priv_t *d)
+{
+    if (d->zoom_timer) {
+        lv_timer_del(d->zoom_timer);
+        d->zoom_timer = NULL;
+    }
+}
+
+/* Long-ENTER hold: keep zooming out until the map's min zoom. */
+static void livemap_zoom_timer_cb(lv_timer_t *timer)
+{
+    livemap_priv_t *d = timer->user_data;
+
+    if (d->view.zoom > d->map.zoom_min)
+        livemap_zoom_out(d);
+    else
+        livemap_zoom_stop(d);
+}
+
+/* Start the zoom-out repeat (first step happens immediately). */
+static void livemap_zoom_repeat_start(livemap_priv_t *d)
+{
+    if (!d->zoom_timer)
+        d->zoom_timer = lv_timer_create(livemap_zoom_timer_cb, 250, d);
+}
+
 /*
  * Build the map page: full-screen canvas, info/hint overlays,
  * open the .map file and initialize the initial viewport.
@@ -156,6 +233,7 @@ static void livemap_create(page_t *self)
     livemap_priv_t *d = calloc(1, sizeof(livemap_priv_t));
     self->user = d;
     d->pan_key = KEY_NUM;
+    d->follow = 1;
 
     lv_obj_t *scr = self->scr;
     lv_obj_set_style_bg_color(scr, lv_color_hex(0xf5f3ee), 0);
@@ -178,7 +256,7 @@ static void livemap_create(page_t *self)
 
     /* Bottom-right operation hint */
     d->hint = lv_label_create(scr);
-    lv_label_set_text(d->hint, "OK:+  ESC:-");
+    lv_label_set_text(d->hint, "OK:+ HOLD:-");
     lv_obj_set_style_text_font(d->hint, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(d->hint, lv_color_hex(0xffffff), 0);
     lv_obj_set_style_bg_color(d->hint, lv_color_hex(0x000000), 0);
@@ -231,12 +309,13 @@ static void livemap_create(page_t *self)
 }
 
 /*
- * Free the map and the private data; stop any active pan timer.
+ * Free the map and the private data; stop any active pan/zoom timer.
  */
 static void livemap_destroy(page_t *self)
 {
     livemap_priv_t *d = self->user;
     livemap_pan_stop(d);
+    livemap_zoom_stop(d);
     if (d->map_ok)
         mf_close(&d->map);
     free(self->user);
@@ -246,12 +325,42 @@ static void livemap_destroy(page_t *self)
 /* Stop auto-pan when the page leaves the foreground. */
 static void livemap_on_hide(page_t *self)
 {
-    livemap_pan_stop(self->user);
+    livemap_priv_t *d = self->user;
+
+    livemap_pan_stop(d);
+    if (d->gps_sub) {
+        msg_center_unsubscribe(app_msg_center(), MSG_GPS, d->gps_sub);
+        d->gps_sub = NULL;
+    }
+}
+
+/* Follow the GPS fix while the page is visible: subscribe on entry and
+ * recenter immediately when a fix is already known. */
+static void livemap_on_show(page_t *self)
+{
+    livemap_priv_t *d = self->user;
+    if (!d)
+        return;
+
+    d->follow = 1;
+    d->follow_ms = 0;
+    if (!d->gps_sub)
+        d->gps_sub = msg_center_subscribe(app_msg_center(), MSG_GPS,
+                                          livemap_on_gps, self);
+
+    const gps_data_t *g = app_gps();
+    if (d->map_ok && g->fix) {
+        mf_view_init(&d->view, d->view.zoom, g->lat, g->lon,
+                     APP_SCR_HOR, APP_SCR_VER);
+        livemap_redraw(d);
+    }
 }
 
 /*
- * Key handling: arrows pan (with long-press repeat), ENTER zooms
- * in, BACK zooms out. Key release stops the auto-pan timer.
+ * Key handling: arrows pan (with long-press repeat), ENTER click zooms
+ * in, ENTER held zooms out continuously (and exits the page when held
+ * while already at the min zoom). BACK mirrors the ENTER gestures for
+ * the simulator. Key release stops the auto-pan/zoom timers.
  */
 static void livemap_on_key(page_t *self, const key_event_t *ev)
 {
@@ -260,9 +369,11 @@ static void livemap_on_key(page_t *self, const key_event_t *ev)
         return;
 
     if (!ev->is_press) {
-        /* Key release: stop the long-press pan */
+        /* Key release: stop the long-press pan / zoom-out */
         if (ev->id == d->pan_key)
             livemap_pan_stop(d);
+        if (ev->id == KEY_BTN_ENTER && ev->is_long)
+            livemap_zoom_stop(d);
         return;
     }
 
@@ -280,9 +391,21 @@ static void livemap_on_key(page_t *self, const key_event_t *ev)
         livemap_pan_start(d, ev->id, PAN_STEP_PX, 0);
         break;
     case KEY_BTN_ENTER:
-        livemap_zoom_in(d);
+        if (ev->is_long) {
+            if (d->view.zoom > d->map.zoom_min) {
+                livemap_zoom_out(d);
+                livemap_zoom_repeat_start(d);
+            } else {
+                /* Already at the min zoom: holding OK exits the map. */
+                livemap_zoom_stop(d);
+                page_manager_pop();
+            }
+        } else {
+            livemap_zoom_in(d);
+        }
         break;
     case KEY_BTN_BACK:
+        /* Simulator-only key (ESC): raw semantics, no gesture layer. */
         if (d->view.zoom > d->map.zoom_min)
             livemap_zoom_out(d);
         else
@@ -298,6 +421,7 @@ page_t page_livemap = {
     .ops  = &(page_ops_t){
         .create  = livemap_create,
         .destroy = livemap_destroy,
+        .on_show = livemap_on_show,
         .on_hide = livemap_on_hide,
         .on_key  = livemap_on_key,
     },

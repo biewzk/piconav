@@ -338,7 +338,9 @@ static void home_on_key(page_t *self, const key_event_t *ev)
             app_drawer_set_sel(app_drawer_get_sel() + 1);
         break;
     case KEY_BTN_ENTER:
-        if (d->cur == PANEL_APP_DRAWER) {
+        /* Click only: a long press is ignored here (pages that use the
+         * long-ENTER "back" gesture sit above home in the stack). */
+        if (!ev->is_long && d->cur == PANEL_APP_DRAWER) {
             app_entry_t *app = app_registry_get(app_drawer_get_sel());
             if (app && app->page)
                 page_manager_push(app->page);

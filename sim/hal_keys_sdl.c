@@ -23,6 +23,7 @@ static void q_push(key_id_t id, int press)
         return; /* full: drop */
     s_q[s_qt].id = id;
     s_q[s_qt].is_press = (uint8_t)press;
+    s_q[s_qt].is_long = 0;   /* long-press is a page_manager gesture */
     s_qt = next;
 }
 
@@ -114,6 +115,7 @@ int hal_key_read(key_event_t *ev)
                 break;
             ev->id       = (key_id_t)id;
             ev->is_press = (e.type == SDL_KEYDOWN) ? 1 : 0;
+            ev->is_long  = 0;   /* long-press is a page_manager gesture */
             return 1;
         }
         case SDL_MOUSEWHEEL:
