@@ -1,6 +1,7 @@
 #include "page_dialplate.h"
 #include "../Config/app_config.h"
 #include "../Utils/page_manager.h"
+#include "../Utils/gps_service.h"
 #include "../Utils/log.h"
 #include "../app.h"
 
@@ -94,13 +95,16 @@ static void dialplate_on_gps(msg_topic_t topic, const void *data, void *user)
 }
 
 /* Subscribe on entry and paint the last known fix immediately (the next
- * NMEA sentence can be up to a second away). */
+ * pool refresh can be up to a sample interval away). The dial is the
+ * riding view: 1 s samples keep the trip integrator inside its 2 s gap
+ * rule and the speed readout live. */
 static void dialplate_on_show(page_t *self)
 {
     dial_priv_t *d = self->user;
     if (!d)
         return;
 
+    gps_service_demand(1);
     s_last_stamp_ms = 0;
     dialplate_apply(d, app_gps());
 
@@ -112,6 +116,7 @@ static void dialplate_on_show(page_t *self)
 static void dialplate_on_hide(page_t *self)
 {
     (void)self;
+    gps_service_demand(0);
     if (s_gps_sub) {
         msg_center_unsubscribe(app_msg_center(), MSG_GPS, s_gps_sub);
         s_gps_sub = NULL;

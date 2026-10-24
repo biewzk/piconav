@@ -1,5 +1,6 @@
 #include "page_gps.h"
 #include "../Utils/status_bar.h"
+#include "../Utils/gps_service.h"
 #include "../app.h"
 
 #include <stdio.h>
@@ -191,8 +192,10 @@ static int sat_rank(const gps_data_t *g, int i)
 static void gps_apply(void)
 {
     const gps_data_t *g = app_gps();
+    /* Scale the staleness window with the active sample interval so a
+     * slow (5 s) sampling profile is not mistaken for a dead receiver. */
     bool published = g->stamp_ms != 0;
-    bool stale = !published || (hal_tick_get() - g->stamp_ms > 10000);
+    bool stale = !published || (hal_tick_get() - g->stamp_ms > gps_service_stale_ms());
     bool live = published && !stale;
 
     /* Badge + live dot */

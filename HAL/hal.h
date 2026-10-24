@@ -47,7 +47,7 @@ typedef struct {
     uint8_t  seen;   /* 1 = slot occupied */
 } gps_sat_t;
 
-/* GPS fix snapshot, published on MSG_GPS and cached by App/app.c.
+/* GPS fix snapshot, published on MSG_GPS and pooled by gps_service.
  * lat/lon are signed degrees (+N/+E). fix = 0 means the receiver has no
  * position solution yet; the remaining fields then hold the last known
  * values (speed is 0). */

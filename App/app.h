@@ -11,8 +11,9 @@ extern "C" {
 /* Global message center, created by app_init(). */
 msg_center_t *app_msg_center(void);
 
-/* Latest GPS snapshot (updated by app_run, published on MSG_GPS).
- * Pages read it on_show to show data before the next NMEA sentence. */
+/* GPS data pool (refreshed by gps_service at the configured sample
+ * interval; consumers read it on_show to show data before the next
+ * pool refresh). */
 const gps_data_t *app_gps(void);
 
 /*

@@ -1,0 +1,206 @@
+#include "gps_service.h"
+#include "config_api.h"
+#include "log.h"
+
+#include "lvgl/lvgl.h"
+
+#include <string.h>
+
+/*
+ * gps_service.c - see gps_service.h for the design. The pool replaces
+ * the snapshot App/app.c used to refresh from its main loop.
+ */
+
+#define GPS_DRAIN_MS        1000  /* raw UART drain cadence (see header) */
+#define GPS_MIN_INTERVAL_S  1
+#define GPS_MAX_INTERVAL_S  60
+#define GPS_CFG_RELOAD_MS   30000 /* external config change pickup */
+#define GPS_STALE_FLOOR_MS  10000
+#define GPS_DEFAULT_FREQ_S  5
+
+#define GPS_KEY_MODE "gps.mode"
+#define GPS_KEY_FREQ "gps.freq"
+
+static msg_center_t *s_mc;
+static lv_timer_t   *s_timer;
+
+static gps_data_t s_pool;      /* data pool consumers read */
+static gps_data_t s_latest;    /* freshest parsed receiver state */
+
+static int      s_mode     = GPS_MODE_AUTO;
+static uint32_t s_freq_s   = GPS_DEFAULT_FREQ_S;  /* manual-mode interval */
+static uint32_t s_demand_s;                       /* 0 = no fast demand */
+static uint32_t s_interval_ms;                    /* effective publish gap */
+static uint32_t s_last_pub_ms;                    /* last pool refresh */
+static uint32_t s_last_cfg_ms;                    /* last config re-read */
+
+static const char *mode_name(void)
+{
+    switch (s_mode) {
+    case GPS_MODE_MANUAL: return "manual";
+    case GPS_MODE_OFF:    return "off";
+    default:              return "auto";
+    }
+}
+
+/* Recompute the effective publish interval and log transitions. */
+static void interval_update(const char *reason)
+{
+    uint32_t old = s_interval_ms;
+    uint32_t sec;
+
+    switch (s_mode) {
+    case GPS_MODE_MANUAL: sec = s_freq_s; break;
+    case GPS_MODE_OFF:    sec = 0;        break;
+    default:
+        sec = s_demand_s ? s_demand_s : GPS_DEMAND_DEFAULT_SEC;
+        break;
+    }
+
+    if (sec != 0) {
+        if (sec < GPS_MIN_INTERVAL_S)
+            sec = GPS_MIN_INTERVAL_S;
+        if (sec > GPS_MAX_INTERVAL_S)
+            sec = GPS_MAX_INTERVAL_S;
+        s_interval_ms = sec * 1000;
+    } else {
+        s_interval_ms = 0;
+    }
+
+    if (s_interval_ms != old)
+        LOG_I("gps service: %s, interval %u ms (%s)",
+              mode_name(), (unsigned)s_interval_ms, reason);
+}
+
+/* Drain the receiver and, when the sample interval allows, move the
+ * freshest parsed state into the pool and publish it. */
+static void gps_sample(bool force)
+{
+    gps_data_t tmp;
+    uint32_t now;
+
+    if (s_mode == GPS_MODE_OFF)
+        return;
+
+    now = hal_tick_get();
+
+    /* Collect everything the receiver pushed since the last drain; the
+     * tty input buffer only holds ~4 KB (~4 s at 9600 baud). */
+    if (!hal_gps_read(&tmp))
+        return;   /* receiver silent: keep the pool as it is */
+    s_latest = tmp;
+    while (hal_gps_read(&tmp))
+        s_latest = tmp;
+
+    if (!force && now - s_last_pub_ms < s_interval_ms)
+        return;
+
+    s_pool = s_latest;
+    if (s_pool.stamp_ms == 0)
+        s_pool.stamp_ms = now;
+    s_last_pub_ms = now;
+    msg_center_publish(s_mc, MSG_GPS, &s_pool);
+    LOG_D("gps service: pool refresh @%ums", (unsigned)now);
+}
+
+static void gps_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+
+    /* Pick up gps.* edits made by other processes (configctl/webctl);
+     * skip the re-read while this app holds unsaved config edits. */
+    if (s_last_cfg_ms == 0 ||
+        hal_tick_get() - s_last_cfg_ms >= GPS_CFG_RELOAD_MS) {
+        s_last_cfg_ms = hal_tick_get();
+        if (!config_is_dirty())
+            gps_service_config_reload();
+    }
+
+    gps_sample(false);
+}
+
+static void on_config_changed(msg_topic_t topic, const void *data, void *user)
+{
+    (void)topic;
+    (void)data;
+    (void)user;
+    gps_service_config_reload();
+}
+
+void gps_service_config_reload(void)
+{
+    int mode = s_mode;
+    int freq = (int)s_freq_s;
+
+    config_init();   /* re-read the last committed block from the driver */
+    config_get_int(GPS_KEY_MODE, &mode, GPS_MODE_AUTO);
+    config_get_int(GPS_KEY_FREQ, &freq, (int)GPS_DEFAULT_FREQ_S);
+    if (freq < GPS_MIN_INTERVAL_S)
+        freq = GPS_MIN_INTERVAL_S;
+    if (freq > GPS_MAX_INTERVAL_S)
+        freq = GPS_MAX_INTERVAL_S;
+
+    if (mode != s_mode || (uint32_t)freq != s_freq_s) {
+        s_mode   = mode;
+        s_freq_s = (uint32_t)freq;
+        interval_update("config");
+        gps_sample(true);
+    }
+}
+
+void gps_service_demand(uint32_t sec)
+{
+    if (sec == s_demand_s)
+        return;
+
+    s_demand_s = sec;
+    interval_update("demand");
+
+    /* Entering a fast page must not wait out the slow interval. */
+    gps_sample(true);
+}
+
+uint32_t gps_service_interval_ms(void)
+{
+    return s_interval_ms;
+}
+
+uint32_t gps_service_stale_ms(void)
+{
+    uint32_t iv = s_interval_ms ? s_interval_ms : GPS_DEFAULT_FREQ_S * 1000;
+    uint32_t t  = iv * 3;
+    return t > GPS_STALE_FLOOR_MS ? t : GPS_STALE_FLOOR_MS;
+}
+
+const gps_data_t *gps_service_data(void)
+{
+    return &s_pool;
+}
+
+void gps_service_init(msg_center_t *mc)
+{
+    int mode = GPS_MODE_AUTO;
+    int freq = (int)GPS_DEFAULT_FREQ_S;
+
+    s_mc = mc;
+
+    config_init();
+    config_get_int(GPS_KEY_MODE, &mode, GPS_MODE_AUTO);
+    config_get_int(GPS_KEY_FREQ, &freq, (int)GPS_DEFAULT_FREQ_S);
+    if (freq < GPS_MIN_INTERVAL_S)
+        freq = GPS_MIN_INTERVAL_S;
+    if (freq > GPS_MAX_INTERVAL_S)
+        freq = GPS_MAX_INTERVAL_S;
+    s_mode   = mode;
+    s_freq_s = (uint32_t)freq;
+
+    interval_update("init");
+
+    msg_center_subscribe(mc, MSG_CONFIG_CHANGED, on_config_changed, NULL);
+
+    s_last_cfg_ms = hal_tick_get();
+    s_timer = lv_timer_create(gps_timer_cb, GPS_DRAIN_MS, NULL);
+
+    LOG_I("gps service: started (%s, interval %u ms)",
+          mode_name(), (unsigned)s_interval_ms);
+}

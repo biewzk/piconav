@@ -1,6 +1,7 @@
 #include "page_livemap.h"
 #include "../Config/app_config.h"
 #include "../Utils/page_manager.h"
+#include "../Utils/gps_service.h"
 #include "../app.h"
 #include "../Utils/log.h"
 #include "../../Mapsforge/mf_map.h"
@@ -328,14 +329,16 @@ static void livemap_on_hide(page_t *self)
     livemap_priv_t *d = self->user;
 
     livemap_pan_stop(d);
+    gps_service_demand(0);
     if (d->gps_sub) {
         msg_center_unsubscribe(app_msg_center(), MSG_GPS, d->gps_sub);
         d->gps_sub = NULL;
     }
 }
 
-/* Follow the GPS fix while the page is visible: subscribe on entry and
- * recenter immediately when a fix is already known. */
+/* Follow the GPS fix while the page is visible: 1 s samples (the map
+ * only re-renders on pool refreshes), subscribe on entry and recenter
+ * immediately when a fix is already known. */
 static void livemap_on_show(page_t *self)
 {
     livemap_priv_t *d = self->user;
@@ -344,6 +347,7 @@ static void livemap_on_show(page_t *self)
 
     d->follow = 1;
     d->follow_ms = 0;
+    gps_service_demand(1);
     if (!d->gps_sub)
         d->gps_sub = msg_center_subscribe(app_msg_center(), MSG_GPS,
                                           livemap_on_gps, self);

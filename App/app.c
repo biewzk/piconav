@@ -1,11 +1,11 @@
 #include "app.h"
 #include "Utils/page_manager.h"
+#include "Utils/gps_service.h"
 #include "Utils/log.h"
 #include "Pages/page_home.h"
 #include "../HAL/hal.h"
 
 static msg_center_t *s_mc;
-static gps_data_t    s_gps;
 
 /* Return the global message center created by app_init(). */
 msg_center_t *app_msg_center(void)
@@ -13,10 +13,11 @@ msg_center_t *app_msg_center(void)
     return s_mc;
 }
 
-/* Return the latest GPS snapshot (zeroed until the first NMEA sentence). */
+/* Return the GPS data pool (refreshed by gps_service at the configured
+ * sample interval, not per NMEA sentence). */
 const gps_data_t *app_gps(void)
 {
-    return &s_gps;
+    return gps_service_data();
 }
 
 /*
@@ -40,13 +41,16 @@ void app_init(void)
     if (hal_gps_init() != 0)
         LOG_W("hal_gps_init failed, GPS unavailable");
 
+    gps_service_init(s_mc);
+
     page_manager_push(&page_home);
     LOG_I("pushed home page (depth=%d)", page_manager_depth());
 }
 
 /*
- * Main loop: drain key events and GPS snapshots into the message center,
- * run the LVGL timer handler and sleep briefly, until hal_should_quit().
+ * Main loop: drain key events into the message center, run the LVGL
+ * timer handler (which also drives the gps_service sampler) and sleep
+ * briefly, until hal_should_quit().
  */
 void app_run(void)
 {
@@ -55,12 +59,6 @@ void app_run(void)
         while (hal_key_read(&ev)) {
             LOG_D("key event: id=%d press=%d", ev.id, ev.is_press);
             msg_center_publish(s_mc, MSG_KEY, &ev);
-        }
-
-        gps_data_t gps;
-        while (hal_gps_read(&gps)) {
-            s_gps = gps;
-            msg_center_publish(s_mc, MSG_GPS, &s_gps);
         }
 
         lv_timer_handler();

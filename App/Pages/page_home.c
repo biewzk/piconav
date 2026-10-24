@@ -6,6 +6,7 @@
 #include "page_gps.h"
 #include "app_registry.h"
 #include "../Config/app_config.h"
+#include "../Utils/gps_service.h"
 #include "../Utils/log.h"
 
 #include <stdlib.h>
@@ -60,6 +61,15 @@ static void clock_stop(home_priv_t *d)
         lv_timer_del(d->clock_timer);
         d->clock_timer = NULL;
     }
+}
+
+/* ---------- GPS sampling demand ---------- */
+
+/* The GPS receiver panel is a live diagnostic view and asks the sampler
+ * for 1 s updates; any other panel falls back to the service default. */
+static void home_gps_demand(home_priv_t *d)
+{
+    gps_service_demand(d->cur == PANEL_GPS ? 1 : 0);
 }
 
 /* ---------- carousel animation ---------- */
@@ -129,6 +139,7 @@ static void home_switch_panel(home_priv_t *d, int new_idx, int dir)
     lv_anim_start(&a_in);
 
     d->cur = new_idx;
+    home_gps_demand(d);
     LOG_I("carousel: panel %d -> %d", old_idx, new_idx);
 }
 
@@ -293,6 +304,7 @@ static void home_on_show(page_t *self)
         lv_obj_set_x(d->panels[i], x);
     }
     clock_start(d);
+    home_gps_demand(d);
     /* Play the entrance animation */
     if (d->entrance_anim)
         lv_anim_timeline_start(d->entrance_anim);
@@ -302,6 +314,8 @@ static void home_on_hide(page_t *self)
 {
     home_priv_t *d = self->user;
     clock_stop(d);
+    /* The page covering home declares its own demand (if any). */
+    gps_service_demand(0);
 }
 
 /* ---------- key handling ---------- */

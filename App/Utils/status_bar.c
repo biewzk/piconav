@@ -1,4 +1,5 @@
 #include "status_bar.h"
+#include "gps_service.h"
 #include "../app.h"
 #include "../../HAL/hal.h"
 
@@ -36,7 +37,9 @@ static void sb_refresh_gps(void)
     int lit = 0;
     uint32_t lit_col = COL_DIM;
 
-    if (g->stamp_ms != 0 && hal_tick_get() - g->stamp_ms <= 10000) {
+    /* Staleness follows the sampler interval (see gps_service.h): a 5 s
+     * sampling profile must not read as "no data". */
+    if (g->stamp_ms != 0 && hal_tick_get() - g->stamp_ms <= gps_service_stale_ms()) {
         if (g->fix) {
             lit = 4;
             lit_col = COL_OK;
