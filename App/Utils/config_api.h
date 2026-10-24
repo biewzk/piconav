@@ -59,6 +59,13 @@ int config_unset(const char *key);
 /* Persist: serialize the in-memory config and write to the driver (0 on success) */
 int config_save(void);
 
+/* Stage the in-memory root in the driver's RAM WITHOUT committing:
+ * readers of /dev/config see it immediately (the staged payload shadows
+ * flash), but no NAND write happens, so it is cheap enough to do on
+ * every change. A later config_save() commits it; config_rollback()
+ * discards it. Returns 0 on success. */
+int config_stage(void);
+
 /* Roll back to the last known valid version (done automatically on the
  * read path; explicit call discards unsaved changes and reloads) */
 int config_rollback(void);
@@ -70,7 +77,8 @@ int config_get_status(unsigned int *active_block, unsigned int *total_blocks,
 /* Format the whole config partition (clears all config, dangerous) */
 int config_format(void);
 
-/* Whether config has been modified but not yet saved */
+/* Whether the in-memory root holds changes not yet staged (driver RAM)
+ * or committed (flash); a true value makes config_changed() probes skip */
 int config_is_dirty(void);
 
 /* Cheap external-change probe: reads the driver payload (staged if

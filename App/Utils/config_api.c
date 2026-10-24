@@ -379,6 +379,41 @@ int config_is_dirty(void)
 	return g_cfg.dirty;
 }
 
+int config_stage(void)
+{
+	struct config_handle *c = &g_cfg;
+	char *text;
+	ssize_t n, w;
+
+	if (c->fd < 0)
+		return -EIO;
+	if (!c->root)
+		return -EINVAL;
+
+	text = cJSON_PrintUnformatted(c->root);
+	if (!text)
+		return -ENOMEM;
+
+	n = (ssize_t)strlen(text);
+	if (n > CONFIG_API_MAX_DATA) {
+		free(text);
+		return -E2BIG;
+	}
+
+	/* write() only stages the payload in the driver's RAM; the data
+	 * reaches NAND only via CONFIG_IOC_COMMIT (see config_save). */
+	w = write(c->fd, text, (size_t)n);
+	if (w == n) {
+		/* The root now matches what readers of /dev/config see, so
+		 * there is nothing "unsaved" left and the change probe must
+		 * not report our own staging as external drift. */
+		c->dirty = 0;
+		snap_set(text, n);
+	}
+	free(text);
+	return w == n ? 0 : (w < 0 ? -errno : -EIO);
+}
+
 int config_changed(void)
 {
 	char *cur;

@@ -19,8 +19,9 @@
 #define GPS_STALE_FLOOR_MS  10000
 #define GPS_DEFAULT_FREQ_S  5
 
-#define GPS_KEY_MODE "gps.mode"
-#define GPS_KEY_FREQ "gps.freq"
+#define GPS_KEY_MODE   "gps.mode"
+#define GPS_KEY_FREQ   "gps.freq"
+#define GPS_KEY_LIVE   "gps.interval"   /* published actual rate (state) */
 
 static msg_center_t *s_mc;
 static sampler_t    *s_sampler;
@@ -32,6 +33,10 @@ static int      s_mode     = GPS_MODE_AUTO;
 static uint32_t s_freq_s   = GPS_DEFAULT_FREQ_S;  /* manual-mode interval */
 static uint32_t s_demand_s;                       /* 0 = no fast demand */
 static uint32_t s_interval_ms;                    /* effective publish gap */
+
+static const char *mode_name(void);
+
+static void actual_interval_publish(void);
 
 static const char *mode_name(void)
 {
@@ -66,9 +71,11 @@ static void interval_update(const char *reason)
         s_interval_ms = 0;
     }
 
-    if (s_interval_ms != old)
+    if (s_interval_ms != old) {
         LOG_I("gps service: %s, interval %u ms (%s)",
               mode_name(), (unsigned)s_interval_ms, reason);
+        actual_interval_publish();
+    }
 }
 
 /* Push the current mode/interval into the sampler: OFF suspends the
@@ -84,6 +91,34 @@ static void sampler_apply(void)
     }
     sampler_resume(s_sampler);
     sampler_set_sample_ms(s_sampler, s_interval_ms);
+}
+
+/*
+ * Publish the actual sampling rate as gps.interval (seconds, 0 = off),
+ * staged in driver RAM only - no commit, no flash wear - so external
+ * readers (configctl/webctl) see the rate AUTO mode is really running
+ * at as pages come and go. gps.freq is never touched here: it stays the
+ * manual-mode user setting.
+ */
+static void actual_interval_publish(void)
+{
+    int sec = s_mode == GPS_MODE_OFF ? 0 : (int)(s_interval_ms / 1000);
+    int cur = -1;
+
+    if (config_is_dirty())
+        return;   /* unsaved edits in flight; do not stage over them */
+
+    /* Fold in an external edit that landed since our last look so a
+     * concurrent configctl change is not staged away. */
+    if (config_changed() == 1)
+        config_init();
+
+    config_get_int(GPS_KEY_LIVE, &cur, -1);
+    if (cur == sec)
+        return;
+
+    if (config_set_int(GPS_KEY_LIVE, sec) == 0 && config_stage() == 0)
+        LOG_D("gps service: staged gps.interval=%us", sec);
 }
 
 /* Poll: drain everything the receiver pushed since the last tick (the
@@ -194,6 +229,7 @@ void gps_service_init(msg_center_t *mc)
     s_sampler = sampler_create(GPS_POLL_MS, s_interval_ms,
                                gps_poll, gps_publish, NULL);
     sampler_apply();
+    actual_interval_publish();   /* publish the boot-time actual rate */
 
     msg_center_subscribe(mc, MSG_CONFIG_CHANGED, on_config_changed, NULL);
 
