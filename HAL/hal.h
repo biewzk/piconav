@@ -31,6 +31,22 @@ typedef struct {
     uint8_t  is_long;    /* 1 = long-press gesture (ENTER only) */
 } key_event_t;
 
+/* Per-satellite reception entry: position/signal from GSV sentences,
+ * used-in-solution flag from GSA. Kept in a fixed table indexed by
+ * arrival; the UI matches entries by PRN. */
+#define GPS_SATS_MAX 20
+
+typedef struct {
+    uint8_t  prn;    /* GPS 1-32, GLONASS 65-96, BeiDou 1-63 */
+    uint8_t  sys;    /* constellation char from the talker id: 'P' GPS,
+                      * 'L' GLONASS, 'B'/'D' BeiDou, 'N' combined, ... */
+    uint8_t  elev;   /* elevation deg 0-90, 0xFF = unknown */
+    int16_t  azim;   /* azimuth deg 0-359, -1 = unknown */
+    int8_t   snr;    /* dB-Hz 0-99, -1 = signal not tracked */
+    uint8_t  used;   /* 1 = part of the current solution (GSA) */
+    uint8_t  seen;   /* 1 = slot occupied */
+} gps_sat_t;
+
 /* GPS fix snapshot, published on MSG_GPS and cached by App/app.c.
  * lat/lon are signed degrees (+N/+E). fix = 0 means the receiver has no
  * position solution yet; the remaining fields then hold the last known
@@ -38,6 +54,8 @@ typedef struct {
 typedef struct {
     uint8_t  fix;         /* 1 = valid position fix */
     uint8_t  sats;        /* satellites used in the solution */
+    uint8_t  fix_type;    /* GSA fix dimension: 0 unknown, 2 = 2D, 3 = 3D */
+    uint8_t  sats_view;   /* GSV: satellites in view (all constellations) */
     float    hdop;
     double   lat;
     double   lon;
@@ -46,6 +64,7 @@ typedef struct {
     float    course_deg;  /* course over ground */
     uint32_t utc;         /* UTC seconds since midnight, 0xFFFFFFFF = unknown */
     uint32_t stamp_ms;    /* hal_tick_get() when this snapshot was parsed */
+    gps_sat_t sat[GPS_SATS_MAX];
 } gps_data_t;
 
 /* HAL interface (real-device and simulator each provide an

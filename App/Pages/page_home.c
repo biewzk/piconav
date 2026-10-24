@@ -3,6 +3,7 @@
 #include "page_livemap.h"
 #include "page_dialplate.h"
 #include "page_settings.h"
+#include "page_gps.h"
 #include "app_registry.h"
 #include "../Config/app_config.h"
 #include "../Utils/log.h"
@@ -15,7 +16,7 @@
 
 #define PANEL_WATCH_FACE  0
 #define PANEL_APP_DRAWER  1
-#define PANEL_PLACEHOLDER 2
+#define PANEL_GPS         2
 
 typedef struct {
     lv_obj_t   *panels[CAROUSEL_PANELS];
@@ -218,19 +219,9 @@ static void build_watch_face(home_priv_t *d, lv_obj_t *parent)
 
 static void build_placeholder(lv_obj_t *parent)
 {
-    lv_obj_set_style_bg_color(parent, lv_color_hex(0x0f0f1a), 0);
-
-    lv_obj_t *label = lv_label_create(parent);
-    lv_label_set_text(label, "Coming Soon");
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(label, lv_color_hex(0x555555), 0);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
-
-    lv_obj_t *hint = lv_label_create(parent);
-    lv_label_set_text(hint, "<  LEFT   RIGHT  >");
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x555555), 0);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -12);
+    /* Third carousel panel: the GPS receiver page (its own screen, not an
+     * app drawer entry). */
+    page_gps_panel_create(parent);
 }
 
 /* ---------- page lifecycle ---------- */
@@ -272,14 +263,14 @@ static void home_create(page_t *self)
     lv_obj_set_style_pad_all(d->panels[PANEL_APP_DRAWER], 0, 0);
     app_drawer_create(d->panels[PANEL_APP_DRAWER]);
 
-    /* Panel 2: Placeholder */
-    d->panels[PANEL_PLACEHOLDER] = lv_obj_create(d->container);
-    lv_obj_set_size(d->panels[PANEL_PLACEHOLDER], APP_SCR_HOR, APP_SCR_VER);
-    lv_obj_set_pos(d->panels[PANEL_PLACEHOLDER], 2 * APP_SCR_HOR, 0);
-    lv_obj_clear_flag(d->panels[PANEL_PLACEHOLDER], LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_width(d->panels[PANEL_PLACEHOLDER], 0, 0);
-    lv_obj_set_style_pad_all(d->panels[PANEL_PLACEHOLDER], 0, 0);
-    build_placeholder(d->panels[PANEL_PLACEHOLDER]);
+    /* Panel 2: GPS receiver page */
+    d->panels[PANEL_GPS] = lv_obj_create(d->container);
+    lv_obj_set_size(d->panels[PANEL_GPS], APP_SCR_HOR, APP_SCR_VER);
+    lv_obj_set_pos(d->panels[PANEL_GPS], 2 * APP_SCR_HOR, 0);
+    lv_obj_clear_flag(d->panels[PANEL_GPS], LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_border_width(d->panels[PANEL_GPS], 0, 0);
+    lv_obj_set_style_pad_all(d->panels[PANEL_GPS], 0, 0);
+    build_placeholder(d->panels[PANEL_GPS]);
 }
 
 static void home_destroy(page_t *self)

@@ -157,6 +157,147 @@ static int parse_rmc(nmea_parser_t *p, char **f, int nf)
     return 1;
 }
 
+/* Find the table slot for a satellite: reuse the entry with the same PRN,
+ * else take the first free slot. Returns NULL when the table is full. */
+static gps_sat_t *sat_slot(gps_data_t *d, int prn)
+{
+    gps_sat_t *free_slot = NULL;
+
+    for (int i = 0; i < GPS_SATS_MAX; i++) {
+        gps_sat_t *s = &d->sat[i];
+        if (s->seen && s->prn == prn)
+            return s;
+        if (!s->seen && !free_slot)
+            free_slot = s;
+    }
+    return free_slot;
+}
+
+/* Constellation index for the per-sys GSV bookkeeping. PRNs of GPS and
+ * BeiDou overlap numerically, but sat_slot() only matches across systems
+ * for GLONASS (65-96), which is disjoint from GPS/BeiDou (1-63). */
+static int sys_index(char sys)
+{
+    switch (sys) {
+    case 'P':        return 0;   /* GPS */
+    case 'L':        return 1;   /* GLONASS */
+    case 'B': case 'D': return 2;   /* BeiDou */
+    default:         return 3;   /* GN and other talkers */
+    }
+}
+
+/* $--GSV: total msgs, msg no, sats in view, 4x (prn, elev, azim, snr).
+ * Each constellation emits its own batch; a batch start (msg 1) replaces
+ * that constellation's previous entries. Satellites with no signal carry
+ * empty SNR/elevation/azimuth fields. */
+static int parse_gsv(nmea_parser_t *p, char **f, int nf, char sys)
+{
+    if (nf < 4)
+        return 0;
+
+    gps_data_t *d = &p->data;
+    int si = sys_index(sys);
+    int msg_no = atoi(f[2]);
+
+    int view = atoi(f[3]);
+    if (view > 0 && view <= 99)
+        p->view_cnt[si] = (uint8_t)view;
+    d->sats_view = (uint8_t)(p->view_cnt[0] + p->view_cnt[1] +
+                             p->view_cnt[2] + p->view_cnt[3]);
+
+    if (msg_no == 1) {
+        /* GSA arrives before GSV in every cycle, so stash the used flags
+         * of the outgoing batch and restore them when the same PRN
+         * reappears; otherwise the dots would flicker grey once a second. */
+        p->stash_n[si] = 0;
+        for (int i = 0; i < GPS_SATS_MAX; i++) {
+            gps_sat_t *s = &d->sat[i];
+            if (!s->seen || s->sys != (uint8_t)sys)
+                continue;
+            if (p->stash_n[si] < 12) {
+                p->stash_prn[si][p->stash_n[si]]  = s->prn;
+                p->stash_used[si][p->stash_n[si]] = s->used;
+                p->stash_n[si]++;
+            }
+            s->seen = 0;
+        }
+    }
+
+    int quads = (nf - 4) / 4;
+    if (quads > 4)
+        quads = 4;
+
+    for (int q = 0; q < quads; q++) {
+        char **v = f + 4 + q * 4;
+        int prn = atoi(v[0]);
+        if (prn <= 0 || prn > 255)
+            continue;
+
+        gps_sat_t *s = sat_slot(d, prn);
+        if (!s)
+            continue;
+
+        if (!s->seen) {
+            uint8_t used = 0;
+            for (int k = 0; k < p->stash_n[si]; k++) {
+                if (p->stash_prn[si][k] == (uint8_t)prn) {
+                    used = p->stash_used[si][k];
+                    break;
+                }
+            }
+            memset(s, 0, sizeof(*s));
+            s->seen = 1;
+            s->prn  = (uint8_t)prn;
+            s->used = used;
+            s->snr  = -1;
+            s->azim = -1;
+            s->elev = 0xFF;
+        }
+        s->sys = (uint8_t)sys;
+
+        if (v[1][0]) {
+            int e = atoi(v[1]);
+            s->elev = (e < 0) ? 0xFF : (e > 90 ? 90 : (uint8_t)e);
+        }
+        if (v[2][0]) {
+            int a = atoi(v[2]);
+            s->azim = (a < 0) ? -1 : (a > 359 ? 359 : (int16_t)a);
+        }
+        if (v[3][0]) {
+            int sn = atoi(v[3]);
+            s->snr = (int8_t)(sn > 99 ? 99 : sn);
+        }
+    }
+    return 1;
+}
+
+/* $--GSA: mode, fix type (1/2/3), 12x prn, pdop, hdop, vdop. One sentence
+ * per constellation: refresh the used flags of that constellation only,
+ * then mark the listed PRNs as part of the solution. */
+static int parse_gsa(nmea_parser_t *p, char **f, int nf, char sys)
+{
+    if (nf < 15)
+        return 0;
+
+    gps_data_t *d = &p->data;
+    int ft = atoi(f[2]);
+    d->fix_type = (ft == 2 || ft == 3) ? (uint8_t)ft : 0;
+
+    for (int i = 0; i < GPS_SATS_MAX; i++)
+        if (d->sat[i].seen && d->sat[i].sys == (uint8_t)sys)
+            d->sat[i].used = 0;
+
+    for (int k = 0; k < 12 && 3 + k < nf; k++) {
+        int prn = atoi(f[3 + k]);
+        if (prn <= 0)
+            continue;
+        for (int i = 0; i < GPS_SATS_MAX; i++)
+            if (d->sat[i].seen && d->sat[i].prn == prn)
+                d->sat[i].used = 1;
+    }
+    return 1;
+}
+
 /* Decode one complete sentence body (without '$', without checksum). */
 static int parse_sentence(nmea_parser_t *p, char *line)
 {
@@ -171,13 +312,19 @@ static int parse_sentence(nmea_parser_t *p, char *line)
     if (nf < 2 || strlen(f[0]) < 5)
         return 0;
 
-    /* f[0] = talker + sentence id, e.g. "GNGGA" */
+    /* f[0] = talker + sentence id, e.g. "GNGGA"; f[0][1] selects the
+     * constellation for GSA/GSV bookkeeping ("GP" -> GPS, "GL" -> GLONASS). */
     const char *id = f[0] + 2;
+    char sys = f[0][1];
     int updated;
     if (strncmp(id, "GGA", 3) == 0)
         updated = parse_gga(p, f, nf);
     else if (strncmp(id, "RMC", 3) == 0)
         updated = parse_rmc(p, f, nf);
+    else if (strncmp(id, "GSV", 3) == 0)
+        updated = parse_gsv(p, f, nf, sys);
+    else if (strncmp(id, "GSA", 3) == 0)
+        updated = parse_gsa(p, f, nf, sys);
     else
         return 0;
 
