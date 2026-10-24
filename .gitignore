@@ -1,3 +1,4 @@
 build/
 sim/build_sim/
 .vscode/
+resources/*.osm.pbf
