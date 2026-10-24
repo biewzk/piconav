@@ -21,11 +21,20 @@ extern "C" {
  *   - schema version management (CONFIG_SCHEMA_VERSION) for forward-
  *     compatible config evolution
  *
+ * Volatile keys: any key whose name begins with '@' (e.g. "@gps.interval")
+ * is live state, not persistent configuration. Every config_set_* pushes
+ * the whole root into the driver's RAM staging buffer, so all readers of
+ * /dev/config see volatile keys immediately; but they never reach flash -
+ * config_save() strips them before committing, and so does "configctl
+ * commit". The kernel driver stays byte-opaque; this strip contract is
+ * enforced at the two commit paths above (keep it there if a new commit
+ * path is ever added).
+ *
  * Usage (typical app lifecycle):
  *   config_init();                 // open and load existing config
  *   int v; config_get_int("k", &v, 5);
- *   config_set_int("k", 20);
- *   config_save();                 // persist to NAND
+ *   config_set_int("k", 20);       // modifies root + pushes to readers
+ *   config_save();                 // persist to NAND (volatile keys dropped)
  *   config_deinit();
  */
 
@@ -56,15 +65,9 @@ int config_set_bool(const char *key, int val);
 /* Remove a config key */
 int config_unset(const char *key);
 
-/* Persist: serialize the in-memory config and write to the driver (0 on success) */
+/* Persist: serialize the in-memory config and write to the driver (0 on success).
+ * Volatile ('@'-prefixed) keys are stripped before the commit. */
 int config_save(void);
-
-/* Stage the in-memory root in the driver's RAM WITHOUT committing:
- * readers of /dev/config see it immediately (the staged payload shadows
- * flash), but no NAND write happens, so it is cheap enough to do on
- * every change. A later config_save() commits it; config_rollback()
- * discards it. Returns 0 on success. */
-int config_stage(void);
 
 /* Roll back to the last known valid version (done automatically on the
  * read path; explicit call discards unsaved changes and reloads) */

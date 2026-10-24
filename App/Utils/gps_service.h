@@ -31,11 +31,14 @@ extern "C" {
  * Config keys (/dev/config JSON, shared with configctl/webctl):
  *   gps.mode     int  0 = auto (default), 1 = manual, 2 = off
  *   gps.freq     int  manual-mode sample interval in seconds, 1..60
- *   gps.interval int  READ-ONLY state published by the app: the actual
- *                     sampling interval in seconds right now (0 = off).
- *                     It follows AUTO demand as pages change and is
- *                     staged in driver RAM (no commit, no flash wear);
- *                     do not edit it - set gps.mode/gps.freq instead.
+ *   @gps.interval int  READ-ONLY live state published by the app: the
+ *                     actual sampling interval in seconds right now
+ *                     (0 = off). It follows AUTO demand as pages change
+ *                     and is pushed into the driver staging buffer on
+ *                     every change - visible to all readers, never
+ *                     committed to flash ('@'-prefixed keys are stripped
+ *                     by config_save/configctl commit). Do not edit it:
+ *                     set gps.mode/gps.freq instead.
  * External processes change gps.mode/gps.freq via
  * "configctl set-int <key> <val>" + "configctl commit"; the config
  * watcher (App/Utils/config_watcher.h) probes the driver once a second

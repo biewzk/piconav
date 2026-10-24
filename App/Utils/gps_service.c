@@ -19,9 +19,13 @@
 #define GPS_STALE_FLOOR_MS  10000
 #define GPS_DEFAULT_FREQ_S  5
 
-#define GPS_KEY_MODE   "gps.mode"
-#define GPS_KEY_FREQ   "gps.freq"
-#define GPS_KEY_LIVE   "gps.interval"   /* published actual rate (state) */
+#define GPS_KEY_MODE    "gps.mode"
+#define GPS_KEY_FREQ    "gps.freq"
+/* Live state, '@'-prefixed: visible to every reader while staged, but
+ * config_save()/configctl commit strip it before touching flash (see
+ * config_api.h). The unprefixed name was used by rootfs 1.9.8 only. */
+#define GPS_KEY_LIVE    "@gps.interval"
+#define GPS_KEY_LIVE_OLD "gps.interval"
 
 static msg_center_t *s_mc;
 static sampler_t    *s_sampler;
@@ -94,31 +98,27 @@ static void sampler_apply(void)
 }
 
 /*
- * Publish the actual sampling rate as gps.interval (seconds, 0 = off),
- * staged in driver RAM only - no commit, no flash wear - so external
- * readers (configctl/webctl) see the rate AUTO mode is really running
- * at as pages come and go. gps.freq is never touched here: it stays the
- * manual-mode user setting.
+ * Publish the actual sampling rate as @gps.interval (seconds, 0 = off).
+ * Volatile keys are pushed to the driver staging buffer by config_set_*
+ * itself, so every reader of /dev/config sees the rate AUTO mode is
+ * really running at as pages come and go - and no commit can persist it
+ * (config_save/configctl commit strip '@' keys). gps.freq is never
+ * touched here: it stays the manual-mode user setting.
  */
 static void actual_interval_publish(void)
 {
     int sec = s_mode == GPS_MODE_OFF ? 0 : (int)(s_interval_ms / 1000);
-    int cur = -1;
 
     if (config_is_dirty())
         return;   /* unsaved edits in flight; do not stage over them */
 
     /* Fold in an external edit that landed since our last look so a
-     * concurrent configctl change is not staged away. */
+     * concurrent configctl change is not pushed away. */
     if (config_changed() == 1)
         config_init();
 
-    config_get_int(GPS_KEY_LIVE, &cur, -1);
-    if (cur == sec)
-        return;
-
-    if (config_set_int(GPS_KEY_LIVE, sec) == 0 && config_stage() == 0)
-        LOG_D("gps service: staged gps.interval=%us", sec);
+    config_set_int(GPS_KEY_LIVE, sec);
+    LOG_D("gps service: published @gps.interval=%us", sec);
 }
 
 /* Poll: drain everything the receiver pushed since the last tick (the
@@ -177,6 +177,10 @@ void gps_service_config_reload(void)
         sampler_apply();
         sampler_force_sample(s_sampler);
     }
+
+    /* An external commit strips volatile keys from flash; republish the
+     * live rate so readers keep seeing it (~1 s after the commit). */
+    actual_interval_publish();
 }
 
 void gps_service_demand(uint32_t sec)
@@ -224,6 +228,15 @@ void gps_service_init(msg_center_t *mc)
         freq = GPS_MAX_INTERVAL_S;
     s_mode   = mode;
     s_freq_s = (uint32_t)freq;
+
+    /* rootfs 1.9.8 staged the live rate unprefixed; drop the leftover */
+    {
+        int legacy = -1;
+
+        config_get_int(GPS_KEY_LIVE_OLD, &legacy, -1);
+        if (legacy != -1)
+            config_unset(GPS_KEY_LIVE_OLD);
+    }
 
     interval_update("init");
     s_sampler = sampler_create(GPS_POLL_MS, s_interval_ms,

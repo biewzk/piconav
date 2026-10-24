@@ -51,6 +51,53 @@ static void snap_set(const char *data, ssize_t len)
 	s_snap_len = len;
 }
 
+/* Remove volatile ('@'-prefixed) keys from a JSON object; they are live
+ * state and must never be persisted (see config_api.h). */
+static void strip_volatile_keys(cJSON *root)
+{
+	cJSON *item = root->child;
+
+	while (item) {
+		cJSON *next = item->next;
+
+		if (item->string && item->string[0] == '@')
+			cJSON_DeleteItemFromObjectCaseSensitive(root,
+								item->string);
+		item = next;
+	}
+}
+
+/* Push the current root into the driver's RAM staging buffer so all
+ * readers of /dev/config see it; no NAND access, safe on every change.
+ * A failed push leaves dirty set, so the change probe pauses until the
+ * next successful push or save. */
+static void config_publish_root(void)
+{
+	struct config_handle *c = &g_cfg;
+	char *text;
+	ssize_t n, w;
+
+	if (c->fd < 0 || !c->root)
+		return;
+
+	text = cJSON_PrintUnformatted(c->root);
+	if (!text)
+		return;
+
+	n = (ssize_t)strlen(text);
+	if (n > CONFIG_API_MAX_DATA) {
+		free(text);
+		return;
+	}
+
+	w = write(c->fd, text, (size_t)n);
+	if (w == n) {
+		c->dirty = 0;
+		snap_set(text, n);
+	}
+	free(text);
+}
+
 /* ------------------------------------------------------------------ */
 /* Internal: JSON helpers                                               */
 /* ------------------------------------------------------------------ */
@@ -227,6 +274,7 @@ int config_set_int(const char *key, int val)
 		cJSON_AddNumberToObject(g_cfg.root, key, val);
 	}
 	g_cfg.dirty = 1;
+	config_publish_root();
 	return 0;
 }
 
@@ -248,6 +296,7 @@ int config_set_str(const char *key, const char *val)
 		cJSON_DeleteItemFromObjectCaseSensitive(g_cfg.root, key);
 	cJSON_AddStringToObject(g_cfg.root, key, val ? val : "");
 	g_cfg.dirty = 1;
+	config_publish_root();
 	return 0;
 }
 
@@ -265,6 +314,7 @@ int config_set_bool(const char *key, int val)
 		cJSON_DeleteItemFromObjectCaseSensitive(g_cfg.root, key);
 	cJSON_AddBoolToObject(g_cfg.root, key, val);
 	g_cfg.dirty = 1;
+	config_publish_root();
 	return 0;
 }
 
@@ -273,6 +323,7 @@ int config_unset(const char *key)
 	if (g_cfg.root && config_get_node(key)) {
 		cJSON_DeleteItemFromObjectCaseSensitive(g_cfg.root, key);
 		g_cfg.dirty = 1;
+		config_publish_root();
 	}
 	return 0;
 }
@@ -300,7 +351,16 @@ int config_save(void)
 					CONFIG_SCHEMA_VERSION);
 	}
 
-	text = cJSON_PrintUnformatted(c->root);
+	/* Volatile ('@'-prefixed) keys are live state and never reach
+	 * flash: strip them from a copy so the committed block excludes
+	 * them while the in-memory root keeps them staged. */
+	cJSON *out = cJSON_Duplicate(c->root, 1);
+	if (!out)
+		return -ENOMEM;
+	strip_volatile_keys(out);
+
+	text = cJSON_PrintUnformatted(out);
+	cJSON_Delete(out);
 	if (!text)
 		return -ENOMEM;
 
@@ -377,41 +437,6 @@ int config_format(void)
 int config_is_dirty(void)
 {
 	return g_cfg.dirty;
-}
-
-int config_stage(void)
-{
-	struct config_handle *c = &g_cfg;
-	char *text;
-	ssize_t n, w;
-
-	if (c->fd < 0)
-		return -EIO;
-	if (!c->root)
-		return -EINVAL;
-
-	text = cJSON_PrintUnformatted(c->root);
-	if (!text)
-		return -ENOMEM;
-
-	n = (ssize_t)strlen(text);
-	if (n > CONFIG_API_MAX_DATA) {
-		free(text);
-		return -E2BIG;
-	}
-
-	/* write() only stages the payload in the driver's RAM; the data
-	 * reaches NAND only via CONFIG_IOC_COMMIT (see config_save). */
-	w = write(c->fd, text, (size_t)n);
-	if (w == n) {
-		/* The root now matches what readers of /dev/config see, so
-		 * there is nothing "unsaved" left and the change probe must
-		 * not report our own staging as external drift. */
-		c->dirty = 0;
-		snap_set(text, n);
-	}
-	free(text);
-	return w == n ? 0 : (w < 0 ? -errno : -EIO);
 }
 
 int config_changed(void)
