@@ -9,6 +9,10 @@
  * Override at runtime with the MF_MAP_DIR environment variable. */
 #define APP_MAP_DIR_DEFAULT "/data/maps"
 
+/* Config key holding the last selected map file (absolute path, set by
+ * the map picker; the map panel falls back to the first .map found). */
+#define APP_CFG_KEY_MAP_SELECTED "map.selected"
+
 /* Directory scanned at boot for plugin .so files (data partition, so
  * plugins survive OTA). Override at runtime with PICO_NAV_APPS. */
 #define APP_PLUGIN_DIR_DEFAULT "/data/apps"

@@ -4,6 +4,7 @@
 #include "../../HAL/hal.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
 /* Colors match the GPS receiver page palette (dark outdoor theme). */
@@ -22,8 +23,6 @@ typedef struct {
     lv_timer_t *timer;
 } sb_priv_t;
 
-static sb_priv_t s_sb;      /* single instance */
-
 /* Tiny lightning bolt inside the battery outline (USB powered). */
 static const lv_point_t s_bolt_pts[] = {
     {5, 0}, {2, 5}, {4, 5}, {3, 8},
@@ -31,7 +30,7 @@ static const lv_point_t s_bolt_pts[] = {
 
 /* Signal bars: 4 green when fixed; while searching, 1 amber bar plus one
  * more per 6 satellites in view; dim when there is no fresh data. */
-static void sb_refresh_gps(void)
+static void sb_refresh_gps(sb_priv_t *sb)
 {
     const gps_data_t *g = app_gps();
     int lit = 0;
@@ -52,29 +51,31 @@ static void sb_refresh_gps(void)
     }
 
     for (int i = 0; i < 4; i++)
-        lv_obj_set_style_bg_color(s_sb.sig[i],
+        lv_obj_set_style_bg_color(sb->sig[i],
                                   lv_color_hex(i < lit ? lit_col : COL_DIM), 0);
 }
 
 static void sb_timer_cb(lv_timer_t *timer)
 {
-    (void)timer;
+    sb_priv_t *sb = timer->user_data;
 
     time_t now = time(NULL);
     struct tm *lt = localtime(&now);
     if (lt)
-        lv_label_set_text_fmt(s_sb.time_label, "%02d:%02d",
+        lv_label_set_text_fmt(sb->time_label, "%02d:%02d",
                               lt->tm_hour, lt->tm_min);
-    sb_refresh_gps();
+    sb_refresh_gps(sb);
 }
 
 static void sb_on_delete(lv_event_t *e)
 {
-    (void)e;
-    if (s_sb.timer) {
-        lv_timer_del(s_sb.timer);
-        s_sb.timer = NULL;
+    sb_priv_t *sb = lv_event_get_user_data(e);
+
+    if (sb && sb->timer) {
+        lv_timer_del(sb->timer);
+        sb->timer = NULL;
     }
+    free(sb);
 }
 
 /* Plain filled rectangle (no chrome). */
@@ -95,20 +96,24 @@ static lv_obj_t *sb_rect(lv_obj_t *parent, int x, int y, int w, int h,
 
 lv_obj_t *status_bar_create(lv_obj_t *parent)
 {
+    sb_priv_t *sb = calloc(1, sizeof(*sb));
+    if (!sb)
+        return NULL;
+
     lv_obj_t *bar = sb_rect(parent, 0, 0, 240, STATUS_BAR_HEIGHT, COL_BG);
 
     /* Clock (device local time, like a phone) */
-    s_sb.time_label = lv_label_create(bar);
-    lv_label_set_text(s_sb.time_label, "--:--");
-    lv_obj_set_style_text_font(s_sb.time_label, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(s_sb.time_label, lv_color_hex(COL_TEXT), 0);
-    lv_obj_set_pos(s_sb.time_label, 8, 4);
+    sb->time_label = lv_label_create(bar);
+    lv_label_set_text(sb->time_label, "--:--");
+    lv_obj_set_style_text_font(sb->time_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(sb->time_label, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_pos(sb->time_label, 8, 4);
 
     /* GPS signal bars, bottom-aligned on the text line */
     static const uint8_t hs[4] = {4, 6, 8, 10};
     for (int i = 0; i < 4; i++) {
-        s_sb.sig[i] = sb_rect(bar, 196 + i * 4, 16 - hs[i], 3, hs[i], COL_DIM);
-        lv_obj_set_style_radius(s_sb.sig[i], 1, 0);
+        sb->sig[i] = sb_rect(bar, 196 + i * 4, 16 - hs[i], 3, hs[i], COL_DIM);
+        lv_obj_set_style_radius(sb->sig[i], 1, 0);
     }
 
     /* Battery outline + cap + bolt (static: USB powered for now; becomes
@@ -131,9 +136,9 @@ lv_obj_t *status_bar_create(lv_obj_t *parent)
     lv_obj_set_style_line_color(bolt, lv_color_hex(COL_BOLT), 0);
     lv_obj_set_style_line_width(bolt, 1, 0);
 
-    s_sb.timer = lv_timer_create(sb_timer_cb, 1000, NULL);
-    sb_timer_cb(s_sb.timer);
+    sb->timer = lv_timer_create(sb_timer_cb, 1000, sb);
+    sb_timer_cb(sb->timer);
 
-    lv_obj_add_event_cb(bar, sb_on_delete, LV_EVENT_DELETE, NULL);
+    lv_obj_add_event_cb(bar, sb_on_delete, LV_EVENT_DELETE, sb);
     return bar;
 }

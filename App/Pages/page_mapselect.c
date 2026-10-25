@@ -9,9 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* Config key holding the last selected map (absolute path). */
-#define MAPSEL_CFG_KEY "map.selected"
+#include <strings.h>
 
 #define MAPSEL_MAX      16
 #define MAPSEL_PATH_SZ  256
@@ -90,16 +88,16 @@ static void mapselect_paint(mapselect_priv_t *d)
 
 /*
  * Persist the choice, publish it on the runtime "map.selected" topic
- * (so plugins/other pages can react to the picked file) and open the
- * map page by name with the path as the navigation parameter.
- * A failed persist (e.g. no /dev/config in the simulator) only logs:
- * the picked map still opens for this session.
+ * (the map panel swaps the file live) and pop back. The map page itself
+ * is a home carousel panel - not opened from here. A failed persist
+ * (e.g. no /dev/config in the simulator) only logs: the picked map
+ * still applies for this session.
  */
 static void mapselect_open(mapselect_priv_t *d)
 {
     const char *path = d->paths[d->sel];
 
-    if (config_set_str(MAPSEL_CFG_KEY, path) == 0 && config_save() == 0)
+    if (config_set_str(APP_CFG_KEY_MAP_SELECTED, path) == 0 && config_save() == 0)
         msg_center_publish(app_msg_center(), MSG_CONFIG_CHANGED, NULL);
     else
         LOG_W("mapselect: persist selection failed");
@@ -109,7 +107,7 @@ static void mapselect_open(mapselect_priv_t *d)
         msg_center_publish(app_msg_center(), t, path);
 
     LOG_I("mapselect: selected %s", path);
-    page_manager_open("livemap", path);
+    page_manager_pop();
 }
 
 /*
@@ -200,7 +198,7 @@ static void mapselect_on_show(page_t *self)
     config_init();
     d->cfg_inited = 1;
 
-    config_get_str(MAPSEL_CFG_KEY, sel, sizeof(sel), "");
+    config_get_str(APP_CFG_KEY_MAP_SELECTED, sel, sizeof(sel), "");
     d->sel = 0;
     if (sel[0]) {
         for (int i = 0; i < d->count; i++) {

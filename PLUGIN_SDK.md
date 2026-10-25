@@ -60,7 +60,7 @@ int plugin_init(void)
   on_key`（`page_manager.h`）。长按 ENTER=返回是 page_manager 的默认
   行为，页面自己要用长按 ENTER（如地图缩放）时设
   `PAGE_FLAG_NO_AUTO_BACK`。
-- 页面参数：`page_manager_open("livemap", path)` 的 `param` 指针在
+- 页面参数：`page_manager_open(name, param)` 的 `param` 指针在
   `create()` 内有效（随后被清除），需要在 create 里拷贝进私有数据。
 - **UI 字符串注意**：内置字体（Montserrat）无 CJK 字形，中文标签不会
   显示；如需中文界面文本需自带字体或用转义字节嵌入（参考秒表插件的
@@ -127,9 +127,13 @@ gps_service_demand_add();                 /* on_show */
 gps_service_demand_release();             /* on_hide */
 msg_center_subscribe(app_msg_center(), MSG_GPS, my_gps_cb, self);
 
-/* 地图：a) 跳系统地图页  b) 内嵌地图控件  c) 直接用渲染引擎 */
-page_manager_open("livemap", "/data/maps/city.map");
+/* 地图：a) 内嵌地图控件（含完整 GPS HUD）  b) 直接用渲染引擎 */
 map_view_t *mv = map_view_create(parent, "/data/maps/city.map"); /* App/Utils/map_view.h */
+/* 控件自带方案A HUD：航向箭头/定位徽标/速度/比例尺/N/2xOK 重新跟随。
+ * 喂数据即可：map_view_set_gps(mv, g)（NULL = 无新鲜定位，转搜索态）；
+ * 1s 定时器轮询 app_gps() 并判断 gps_service_stale_ms() 即可。 */
+/* 系统地图页是首页轮播面板（page_livemap.c），不是可 open 的页面；
+ * 选图页仍可按名打开：page_manager_open("mapselect", NULL) */
 #include "mf_map.h"  /* Mapsforge 引擎亦可 */
 
 /* 配置（@ 前缀为易失键，仅存内存不落盘） */

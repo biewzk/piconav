@@ -1,6 +1,7 @@
 #include "page_home.h"
 #include "page_app_drawer.h"
 #include "page_gps.h"
+#include "page_livemap.h"
 #include "app_registry.h"
 #include "../Config/app_config.h"
 #include "../Utils/gps_service.h"
@@ -10,11 +11,12 @@
 #include <string.h>
 #include <time.h>
 
-#define CAROUSEL_PANELS 3
+#define CAROUSEL_PANELS 4
 
 #define PANEL_WATCH_FACE  0
 #define PANEL_APP_DRAWER  1
 #define PANEL_GPS         2
+#define PANEL_MAP         3
 
 typedef struct {
     lv_obj_t   *panels[CAROUSEL_PANELS];
@@ -28,6 +30,8 @@ typedef struct {
     lv_timer_t *clock_timer;
     lv_anim_timeline_t *entrance_anim;
 } home_priv_t;
+
+static home_priv_t *s_home;   /* page_home is a singleton */
 
 /* ---------- clock timer ---------- */
 
@@ -63,18 +67,23 @@ static void clock_stop(home_priv_t *d)
 /* ---------- GPS sampling demand ---------- */
 
 /*
- * The GPS receiver panel is a live diagnostic view and asks the sampler
- * for 1 s updates via a refcounted demand; any other panel contributes
- * none. prev is the panel we are leaving (PANEL_GPS releases), d->cur
- * the one we enter (PANEL_GPS adds).
+ * Panels that consume fast GPS samples (1 s) via the refcounted demand:
+ * the receiver view is a live diagnostic, the map panel needs fixes for
+ * follow + HUD. Any other panel contributes none. prev is the panel we
+ * are leaving, d->cur the one we enter.
  */
+static int panel_uses_gps(int panel)
+{
+    return panel == PANEL_GPS || panel == PANEL_MAP;
+}
+
 static void home_gps_demand(home_priv_t *d, int prev)
 {
-    if (prev == PANEL_GPS && d->cur != PANEL_GPS)
+    if (panel_uses_gps(prev) && !panel_uses_gps(d->cur))
         gps_service_demand_release();
-    else if (prev != PANEL_GPS && d->cur == PANEL_GPS)
+    else if (!panel_uses_gps(prev) && panel_uses_gps(d->cur))
         gps_service_demand_add();
-    /* prev == cur == PANEL_GPS: panel switched to itself, no change. */
+    /* prev == cur and both consuming: panel switched to itself, no change. */
 }
 
 /* ---------- carousel animation ---------- */
@@ -145,6 +154,7 @@ static void home_switch_panel(home_priv_t *d, int new_idx, int dir)
 
     d->cur = new_idx;
     home_gps_demand(d, old_idx);
+    page_livemap_panel_set_active(d->cur == PANEL_MAP);
     LOG_I("carousel: panel %d -> %d", old_idx, new_idx);
 }
 
@@ -240,12 +250,31 @@ static void build_placeholder(lv_obj_t *parent)
     page_gps_panel_create(parent);
 }
 
+/*
+ * Panel-switch callback handed to the map panel: dir -1/+1 = prev/next
+ * carousel panel, 0 = "close the map" (hold OK at min zoom) which jumps
+ * back to the watch face.
+ */
+static void map_panel_nav(int dir)
+{
+    home_priv_t *d = s_home;
+    if (!d)
+        return;
+    if (dir == 0)
+        home_switch_panel(d, PANEL_WATCH_FACE, -1);
+    else if (dir < 0)
+        home_switch_panel(d, d->cur - 1, -1);
+    else
+        home_switch_panel(d, d->cur + 1, 1);
+}
+
 /* ---------- page lifecycle ---------- */
 
 static void home_create(page_t *self)
 {
-    home_priv_t *d = calloc(1, sizeof(home_priv_t));
+    home_priv_t *d = calloc(1, sizeof(*d));
     self->user = d;
+    s_home = d;
     d->cur = 0;
     d->animating = false;
 
@@ -287,6 +316,15 @@ static void home_create(page_t *self)
     lv_obj_set_style_border_width(d->panels[PANEL_GPS], 0, 0);
     lv_obj_set_style_pad_all(d->panels[PANEL_GPS], 0, 0);
     build_placeholder(d->panels[PANEL_GPS]);
+
+    /* Panel 3: map page (like the GPS panel, not a drawer entry) */
+    d->panels[PANEL_MAP] = lv_obj_create(d->container);
+    lv_obj_set_size(d->panels[PANEL_MAP], APP_SCR_HOR, APP_SCR_VER);
+    lv_obj_set_pos(d->panels[PANEL_MAP], 3 * APP_SCR_HOR, 0);
+    lv_obj_clear_flag(d->panels[PANEL_MAP], LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_border_width(d->panels[PANEL_MAP], 0, 0);
+    lv_obj_set_style_pad_all(d->panels[PANEL_MAP], 0, 0);
+    page_livemap_panel_create(d->panels[PANEL_MAP], map_panel_nav);
 }
 
 static void home_destroy(page_t *self)
@@ -298,6 +336,7 @@ static void home_destroy(page_t *self)
     clock_stop(d);
     free(d);
     self->user = NULL;
+    s_home = NULL;
 }
 
 static void home_on_show(page_t *self)
@@ -310,6 +349,7 @@ static void home_on_show(page_t *self)
     }
     clock_start(d);
     home_gps_demand(d, -1);   /* entering home: claim the GPS panel slot */
+    page_livemap_panel_set_active(d->cur == PANEL_MAP);
     /* Play the entrance animation */
     if (d->entrance_anim)
         lv_anim_timeline_start(d->entrance_anim);
@@ -320,18 +360,40 @@ static void home_on_hide(page_t *self)
     home_priv_t *d = self->user;
     clock_stop(d);
     /* The page covering home declares its own demand (if any). */
-    if (d->cur == PANEL_GPS)
+    if (panel_uses_gps(d->cur))
         gps_service_demand_release();
+    page_livemap_panel_set_active(0);
 }
 
 /* ---------- key handling ---------- */
 
+/*
+ * LEFT/RIGHT switch carousel panels on every panel - except the map,
+ * which owns the arrows for panning. There, a double-tap on LEFT/RIGHT
+ * switches panels (handled inside the map panel) and the map widget
+ * reports "close me" (hold OK at min zoom) via the nav callback.
+ * Long ENTER is delivered to the map as zoom-out; on the other panels
+ * it is ignored (pop at the root is a no-op anyway).
+ */
 static void home_on_key(page_t *self, const key_event_t *ev)
 {
+    home_priv_t *d = self->user;
+
+    if (d->cur == PANEL_MAP) {
+        if (page_livemap_panel_key(ev))
+            return;
+        /* Map unusable (open failed): plain carousel navigation. */
+        if (!ev->is_press)
+            return;
+        if (ev->id == KEY_BTN_LEFT)
+            home_switch_panel(d, d->cur - 1, -1);
+        else if (ev->id == KEY_BTN_RIGHT)
+            home_switch_panel(d, d->cur + 1, 1);
+        return;
+    }
+
     if (!ev->is_press)
         return;
-
-    home_priv_t *d = self->user;
 
     switch (ev->id) {
     case KEY_BTN_LEFT:
@@ -363,8 +425,9 @@ static void home_on_key(page_t *self, const key_event_t *ev)
 }
 
 page_t page_home = {
-    .name = "home",
-    .ops  = &(page_ops_t){
+    .name  = "home",
+    .flags = PAGE_FLAG_NO_AUTO_BACK,   /* long ENTER feeds the map zoom */
+    .ops   = &(page_ops_t){
         .create  = home_create,
         .destroy = home_destroy,
         .on_show = home_on_show,
