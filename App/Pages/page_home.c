@@ -140,6 +140,15 @@ static void home_switch_panel(home_priv_t *d, int new_idx, int dir)
 
 /* ---------- watch face builder ---------- */
 
+/* lv_anim exec callbacks: style setters take a selector argument, so
+ * they must be wrapped instead of cast to the 2-arg exec signature
+ * (the cast reads a garbage register for the selector and blows up
+ * depending on the surrounding code layout). */
+static void text_opa_anim_cb(void *var, int32_t val)
+{
+    lv_obj_set_style_text_opa((lv_obj_t *)var, (lv_opa_t)val, 0);
+}
+
 static void build_watch_face(home_priv_t *d, lv_obj_t *parent)
 {
     /* Gradient wallpaper background */
@@ -194,7 +203,7 @@ static void build_watch_face(home_priv_t *d, lv_obj_t *parent)
     lv_anim_t a_time;
     lv_anim_init(&a_time);
     lv_anim_set_var(&a_time, d->time_label);
-    lv_anim_set_exec_cb(&a_time, (lv_anim_exec_xcb_t)lv_obj_set_style_text_opa);
+    lv_anim_set_exec_cb(&a_time, text_opa_anim_cb);
     lv_anim_set_values(&a_time, LV_OPA_TRANSP, LV_OPA_COVER);
     lv_anim_set_time(&a_time, 500);
     lv_anim_set_path_cb(&a_time, lv_anim_path_ease_out);
@@ -216,7 +225,7 @@ static void build_watch_face(home_priv_t *d, lv_obj_t *parent)
     lv_anim_t a_hint;
     lv_anim_init(&a_hint);
     lv_anim_set_var(&a_hint, d->hint_label);
-    lv_anim_set_exec_cb(&a_hint, (lv_anim_exec_xcb_t)lv_obj_set_style_text_opa);
+    lv_anim_set_exec_cb(&a_hint, text_opa_anim_cb);
     lv_anim_set_values(&a_hint, LV_OPA_TRANSP, LV_OPA_COVER);
     lv_anim_set_time(&a_hint, 400);
     lv_anim_set_path_cb(&a_hint, lv_anim_path_ease_out);

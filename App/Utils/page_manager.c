@@ -4,10 +4,24 @@
 
 #include <string.h>
 
+/*
+ * Page host: every page root is a full-screen CONTAINER inside one
+ * master LVGL screen (the X-TRACK PageManager architecture), stacked
+ * as siblings - child order is the z-order. This is what makes the
+ * X-TRACK transitions possible: on push the new page rises from the
+ * bottom over the old one, on pop the old page slides down off the
+ * screen revealing the page beneath (with one LVGL screen per page
+ * the active screen always draws on top, so a sliding-away old page
+ * can never be seen).
+ */
 static msg_center_t *s_mc;
 static page_t *s_stack[PAGE_STACK_MAX];
 static int s_depth;
 static msg_sub_t *s_key_sub;
+static lv_obj_t *s_master;
+static bool s_switch_busy;   /* a push/pop/replace transition is running */
+
+#define SWITCH_ANIM_TIME PAGE_ANIM_TIME   /* X-TRACK default: 500 ms */
 
 /* ---- page registry ---- */
 
@@ -134,36 +148,94 @@ static void page_key_handler(msg_topic_t topic, const void *data, void *user)
 }
 
 /*
- * Initialize the page manager: store the message center and subscribe
- * to MSG_KEY so key events are dispatched to the top page.
+ * Initialize the page manager: create the master screen that hosts all
+ * page containers and subscribe to MSG_KEY so key events are dispatched
+ * to the top page.
  */
 void page_manager_init(msg_center_t *mc)
 {
     s_mc = mc;
     s_depth = 0;
+    s_switch_busy = false;
     memset(s_stack, 0, sizeof(s_stack));
+    s_master = lv_obj_create(NULL);
+    lv_obj_clear_flag(s_master, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_master, lv_color_hex(0x000000), 0);
+    lv_scr_load(s_master);
     s_key_sub = msg_center_subscribe(mc, MSG_KEY, page_key_handler, NULL);
 }
 
-/* Create the page's screen (once) and run its create callback. */
+/* Create the page's full-screen container (once) and run its create
+ * callback. The container is the last child of the master screen, i.e.
+ * on top of everything already on the stack. */
 static void page_build(page_t *page)
 {
     if (page->scr)
         return;
-    page->scr = lv_obj_create(NULL);   /* NULL parent => screen */
+    page->scr = lv_obj_create(s_master);
+    lv_obj_set_size(page->scr, APP_SCR_HOR, APP_SCR_VER);
+    lv_obj_set_pos(page->scr, 0, 0);
     lv_obj_clear_flag(page->scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_border_width(page->scr, 0, 0);
+    lv_obj_set_style_pad_all(page->scr, 0, 0);
+    lv_obj_set_style_radius(page->scr, 0, 0);
     if (page->ops->create)
         page->ops->create(page);
     /* The nav parameter only has to live until create() consumed it. */
     page->param = NULL;
 }
 
+/* Fade the exiting page container out of the tree (pop/replace tail). */
+static void switch_anim_y_cb(void *var, int32_t val)
+{
+    lv_obj_set_y((lv_obj_t *)var, val);
+}
+
+static void switch_anim_opa_cb(void *var, int32_t val)
+{
+    lv_obj_set_style_opa((lv_obj_t *)var, (lv_opa_t)val, 0);
+}
+
+/* Push done: park the covered page (kept cached, hidden for render). */
+static void push_anim_ready_cb(lv_anim_t *a)
+{
+    page_t *old = a->user_data;
+    if (old && old->scr)
+        lv_obj_add_flag(old->scr, LV_OBJ_FLAG_HIDDEN);
+    s_switch_busy = false;
+}
+
+/* Pop done: the slid-away page leaves the stack AND the object tree.
+ * Replace reuses it - its old page tears down the same way. */
+static void pop_anim_ready_cb(lv_anim_t *a)
+{
+    page_t *old = a->user_data;
+    lv_obj_t *scr = old->scr;
+
+    if (old->ops->destroy)
+        old->ops->destroy(old);
+    old->scr = NULL;
+    if (scr)
+        lv_obj_del(scr);
+    s_switch_busy = false;
+}
+
+static void replace_anim_ready_cb(lv_anim_t *a)
+{
+    pop_anim_ready_cb(a);
+}
+
 /*
  * Push a page onto the stack: build it, hide the old page, show the
- * new one and run the slide-in transition.
+ * new one and run the X-TRACK push transition - the new page rises
+ * from the bottom edge and covers the old one (500 ms ease-out).
  */
 void page_manager_push(page_t *page)
 {
+    if (s_switch_busy) {
+        LOG_W("push rejected: switch in progress (%s)", page->name);
+        return;
+    }
     if (s_depth >= PAGE_STACK_MAX) {
         LOG_W("push rejected: page stack full (%s, depth=%d)", page->name, s_depth);
         return;
@@ -186,19 +258,41 @@ void page_manager_push(page_t *page)
     if (page->ops->on_show)
         page->ops->on_show(page);
 
-    if (s_depth == 1)
-        lv_scr_load(page->scr);
-    else
-        lv_scr_load_anim(page->scr, LV_SCR_LOAD_ANIM_OVER_LEFT, PAGE_ANIM_TIME, 0, false);
+    if (s_depth == 1 || !old) {
+        /* First page: the master screen is already up, just place it. */
+        lv_obj_set_pos(page->scr, 0, 0);
+        return;
+    }
+
+    /* The old page shows underneath while the new one rises over it. */
+    s_switch_busy = true;
+    lv_obj_clear_flag(old->scr, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_set_y(page->scr, APP_SCR_VER);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, page->scr);
+    lv_anim_set_values(&a, APP_SCR_VER, 0);
+    lv_anim_set_time(&a, SWITCH_ANIM_TIME);
+    lv_anim_set_exec_cb(&a, switch_anim_y_cb);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_ready_cb(&a, push_anim_ready_cb);
+    lv_anim_set_user_data(&a, old);
+    lv_anim_start(&a);
 }
 
 /*
- * Replace the top page in place: same depth, fade-in transition.
+ * Replace the top page in place: fade the new page in over the old one
+ * (X-TRACK LOAD_ANIM_FADE_ON), then tear the old page down.
  */
 void page_manager_replace(page_t *page)
 {
     if (s_depth == 0) {
         page_manager_push(page);
+        return;
+    }
+    if (s_switch_busy) {
+        LOG_W("replace rejected: switch in progress (%s)", page->name);
         return;
     }
 
@@ -211,25 +305,38 @@ void page_manager_replace(page_t *page)
     s_stack[s_depth - 1] = page;
     LOG_I("replace: %s -> %s (depth=%d)", old->name, page->name, s_depth);
 
-    if (old && old->ops->on_hide)
+    if (old->ops->on_hide)
         old->ops->on_hide(old);
     if (page->ops->on_show)
         page->ops->on_show(page);
 
-    lv_scr_load_anim(page->scr, LV_SCR_LOAD_ANIM_FADE_ON, PAGE_ANIM_TIME, 0, true);
-    if (old->ops->destroy)
-        old->ops->destroy(old);
-    old->scr = NULL;
+    s_switch_busy = true;
+    lv_obj_set_style_opa(page->scr, LV_OPA_TRANSP, 0);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, page->scr);
+    lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_time(&a, SWITCH_ANIM_TIME);
+    lv_anim_set_exec_cb(&a, switch_anim_opa_cb);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_ready_cb(&a, replace_anim_ready_cb);
+    lv_anim_set_user_data(&a, old);
+    lv_anim_start(&a);
 }
 
 /*
- * Pop the top page: hide it, show the new top and run the
- * slide-back transition.
+ * Pop the top page: it slides down off the bottom edge (X-TRACK pop),
+ * revealing the page beneath, which is torn down only after the
+ * transition so it stays visible while moving.
  */
 void page_manager_pop(void)
 {
     if (s_depth <= 1)
         return;
+    if (s_switch_busy) {
+        LOG_W("pop rejected: switch in progress");
+        return;
+    }
 
     page_t *old = s_stack[s_depth - 1];
     s_depth--;
@@ -241,10 +348,20 @@ void page_manager_pop(void)
     if (new_top->ops->on_show)
         new_top->ops->on_show(new_top);
 
-    lv_scr_load_anim(new_top->scr, LV_SCR_LOAD_ANIM_OVER_RIGHT, PAGE_ANIM_TIME, 0, true);
-    if (old->ops->destroy)
-        old->ops->destroy(old);
-    old->scr = NULL;
+    s_switch_busy = true;
+    lv_obj_clear_flag(new_top->scr, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(new_top->scr, 0, 0);
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, old->scr);
+    lv_anim_set_values(&a, 0, APP_SCR_VER);
+    lv_anim_set_time(&a, SWITCH_ANIM_TIME);
+    lv_anim_set_exec_cb(&a, switch_anim_y_cb);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_ready_cb(&a, pop_anim_ready_cb);
+    lv_anim_set_user_data(&a, old);
+    lv_anim_start(&a);
 }
 
 /*
