@@ -70,7 +70,8 @@ $(BUILD_OBJ_DIR)/%.o: %.c
     
 default: $(TARGET)
 	@mkdir -p $(dir $(BUILD_BIN_DIR)/)
-	$(CC) -o $(BUILD_BIN_DIR)/$(BIN) $(TARGET) $(LDFLAGS)
+	$(CC) -o $(BUILD_BIN_DIR)/$(BIN) $(TARGET) $(LDFLAGS) \
+	      -Wl,--export-dynamic -Wl,--version-script=$(CURDIR)/app.exports
 
 clean: 
 	rm -rf $(BUILD_DIR)

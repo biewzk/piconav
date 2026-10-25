@@ -1,8 +1,5 @@
 #include "page_home.h"
 #include "page_app_drawer.h"
-#include "page_livemap.h"
-#include "page_dialplate.h"
-#include "page_settings.h"
 #include "page_gps.h"
 #include "app_registry.h"
 #include "../Config/app_config.h"
@@ -65,11 +62,19 @@ static void clock_stop(home_priv_t *d)
 
 /* ---------- GPS sampling demand ---------- */
 
-/* The GPS receiver panel is a live diagnostic view and asks the sampler
- * for 1 s updates; any other panel falls back to the service default. */
-static void home_gps_demand(home_priv_t *d)
+/*
+ * The GPS receiver panel is a live diagnostic view and asks the sampler
+ * for 1 s updates via a refcounted demand; any other panel contributes
+ * none. prev is the panel we are leaving (PANEL_GPS releases), d->cur
+ * the one we enter (PANEL_GPS adds).
+ */
+static void home_gps_demand(home_priv_t *d, int prev)
 {
-    gps_service_demand(d->cur == PANEL_GPS ? 1 : 0);
+    if (prev == PANEL_GPS && d->cur != PANEL_GPS)
+        gps_service_demand_release();
+    else if (prev != PANEL_GPS && d->cur == PANEL_GPS)
+        gps_service_demand_add();
+    /* prev == cur == PANEL_GPS: panel switched to itself, no change. */
 }
 
 /* ---------- carousel animation ---------- */
@@ -139,7 +144,7 @@ static void home_switch_panel(home_priv_t *d, int new_idx, int dir)
     lv_anim_start(&a_in);
 
     d->cur = new_idx;
-    home_gps_demand(d);
+    home_gps_demand(d, old_idx);
     LOG_I("carousel: panel %d -> %d", old_idx, new_idx);
 }
 
@@ -304,7 +309,7 @@ static void home_on_show(page_t *self)
         lv_obj_set_x(d->panels[i], x);
     }
     clock_start(d);
-    home_gps_demand(d);
+    home_gps_demand(d, -1);   /* entering home: claim the GPS panel slot */
     /* Play the entrance animation */
     if (d->entrance_anim)
         lv_anim_timeline_start(d->entrance_anim);
@@ -315,7 +320,8 @@ static void home_on_hide(page_t *self)
     home_priv_t *d = self->user;
     clock_stop(d);
     /* The page covering home declares its own demand (if any). */
-    gps_service_demand(0);
+    if (d->cur == PANEL_GPS)
+        gps_service_demand_release();
 }
 
 /* ---------- key handling ---------- */

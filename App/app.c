@@ -1,9 +1,10 @@
 #include "app.h"
 #include "Utils/page_manager.h"
 #include "Utils/gps_service.h"
+#include "Utils/trip_store.h"
 #include "Utils/config_watcher.h"
 #include "Utils/log.h"
-#include "Pages/page_home.h"
+#include "Pages/pages_builtin.h"
 #include "../HAL/hal.h"
 
 static msg_center_t *s_mc;
@@ -12,6 +13,16 @@ static msg_center_t *s_mc;
 msg_center_t *app_msg_center(void)
 {
     return s_mc;
+}
+
+/* Id of the runtime "map.selected" topic, registered on first use. */
+msg_topic_t app_topic_map_selected(void)
+{
+    static msg_topic_t t = MSG_TOPIC_INVALID;
+
+    if (t == MSG_TOPIC_INVALID && s_mc)
+        t = msg_topic_register(s_mc, "map.selected");
+    return t;
 }
 
 /* Return the GPS data pool (refreshed by gps_service at the configured
@@ -25,8 +36,9 @@ const gps_data_t *app_gps(void)
  * Initialize the application framework:
  *  1. create the message center
  *  2. init the page manager (subscribes to MSG_KEY)
- *  3. init the HAL keys
- *  4. push the livemap page as the root page
+ *  3. init the HAL keys and GPS
+ *  4. start the services (sampler, trip store, config watcher)
+ *  5. register the built-in pages/apps, then open the home page
  */
 void app_init(void)
 {
@@ -43,9 +55,11 @@ void app_init(void)
         LOG_W("hal_gps_init failed, GPS unavailable");
 
     gps_service_init(s_mc);
+    trip_store_init(s_mc);
     config_watcher_init(s_mc);
 
-    page_manager_push(&page_home);
+    pages_builtin_register();
+    page_manager_open("home", NULL);
     LOG_I("pushed home page (depth=%d)", page_manager_depth());
 }
 

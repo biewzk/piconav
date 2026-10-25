@@ -197,8 +197,8 @@ static void settings_on_hide(page_t *self)
 
 /*
  * Key handling: UP/DOWN moves the selection, ENTER edits/applies the
- * selected setting item and persists it, holding ENTER (or LEFT/BACK)
- * pops the page.
+ * selected setting item and persists it; holding ENTER pops via the
+ * page manager's default back gesture, LEFT/BACK pop directly.
  */
 static void settings_on_key(page_t *self, const key_event_t *ev)
 {
@@ -215,14 +215,13 @@ static void settings_on_key(page_t *self, const key_event_t *ev)
         d->sel = (d->sel + 1) % SETTINGS_NUM;
         settings_paint(d);
         break;
+    case KEY_BTN_ENTER:
+        if (!ev->is_long)
+            settings_apply(d, d->sel);
+        break;
     case KEY_BTN_LEFT:
     case KEY_BTN_BACK:
-    case KEY_BTN_ENTER:
-        /* The device has no BACK key: holding OK is the back gesture. */
-        if (ev->id == KEY_BTN_ENTER && !ev->is_long)
-            settings_apply(d, d->sel);
-        else
-            page_manager_pop();
+        page_manager_pop();
         break;
     default:
         break;

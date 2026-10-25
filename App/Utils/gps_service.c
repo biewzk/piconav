@@ -35,7 +35,7 @@ static gps_data_t s_latest;    /* freshest parsed receiver state */
 
 static int      s_mode     = GPS_MODE_AUTO;
 static uint32_t s_freq_s   = GPS_DEFAULT_FREQ_S;  /* manual-mode interval */
-static uint32_t s_demand_s;                       /* 0 = no fast demand */
+static int      s_demand_n;                       /* fast-demand consumers */
 static uint32_t s_interval_ms;                    /* effective publish gap */
 
 static const char *mode_name(void);
@@ -61,7 +61,7 @@ static void interval_update(const char *reason)
     case GPS_MODE_MANUAL: sec = s_freq_s; break;
     case GPS_MODE_OFF:    sec = 0;        break;
     default:
-        sec = s_demand_s ? s_demand_s : GPS_DEMAND_DEFAULT_SEC;
+        sec = s_demand_n > 0 ? 1 : GPS_DEMAND_DEFAULT_SEC;
         break;
     }
 
@@ -183,16 +183,28 @@ void gps_service_config_reload(void)
     actual_interval_publish();
 }
 
-void gps_service_demand(uint32_t sec)
+void gps_service_demand_add(void)
 {
-    if (sec == s_demand_s)
-        return;
+    s_demand_n++;
+    if (s_demand_n == 1) {
+        interval_update("demand");
+        sampler_apply();
+        /* Entering a fast page must not wait out the slow interval. */
+        sampler_force_sample(s_sampler);
+    }
+}
 
-    s_demand_s = sec;
-    interval_update("demand");
-    sampler_apply();
-    /* Entering a fast page must not wait out the slow interval. */
-    sampler_force_sample(s_sampler);
+void gps_service_demand_release(void)
+{
+    if (s_demand_n <= 0) {
+        LOG_W("gps service: demand release without a matching add");
+        return;
+    }
+    s_demand_n--;
+    if (s_demand_n == 0) {
+        interval_update("demand");
+        sampler_apply();
+    }
 }
 
 uint32_t gps_service_interval_ms(void)

@@ -4,7 +4,6 @@
 #include "../Utils/page_manager.h"
 #include "../Utils/log.h"
 #include "../app.h"
-#include "page_livemap.h"
 
 #include <dirent.h>
 #include <stdio.h>
@@ -90,7 +89,9 @@ static void mapselect_paint(mapselect_priv_t *d)
 }
 
 /*
- * Persist the choice, hand the path to livemap and open it.
+ * Persist the choice, publish it on the runtime "map.selected" topic
+ * (so plugins/other pages can react to the picked file) and open the
+ * map page by name with the path as the navigation parameter.
  * A failed persist (e.g. no /dev/config in the simulator) only logs:
  * the picked map still opens for this session.
  */
@@ -103,9 +104,12 @@ static void mapselect_open(mapselect_priv_t *d)
     else
         LOG_W("mapselect: persist selection failed");
 
-    page_livemap_set_map(path);
+    msg_topic_t t = app_topic_map_selected();
+    if (t != MSG_TOPIC_INVALID)
+        msg_center_publish(app_msg_center(), t, path);
+
     LOG_I("mapselect: selected %s", path);
-    page_manager_push(&page_livemap);
+    page_manager_open("livemap", path);
 }
 
 /*
@@ -221,7 +225,8 @@ static void mapselect_on_hide(page_t *self)
 
 /*
  * Key handling: UP/DOWN move the selection, ENTER opens the selected
- * map, holding ENTER (or LEFT/BACK) cancels back to the previous page.
+ * map; holding ENTER pops via the page manager's default back gesture,
+ * LEFT/BACK pop directly.
  */
 static void mapselect_on_key(page_t *self, const key_event_t *ev)
 {
@@ -242,16 +247,13 @@ static void mapselect_on_key(page_t *self, const key_event_t *ev)
             mapselect_paint(d);
         }
         break;
+    case KEY_BTN_ENTER:
+        if (!ev->is_long && d->count > 0)
+            mapselect_open(d);
+        break;
     case KEY_BTN_LEFT:
     case KEY_BTN_BACK:
-    case KEY_BTN_ENTER:
-        /* The device has no BACK key: holding OK is the back gesture. */
-        if (ev->id == KEY_BTN_ENTER && !ev->is_long) {
-            if (d->count > 0)
-                mapselect_open(d);
-        } else {
-            page_manager_pop();
-        }
+        page_manager_pop();
         break;
     default:
         break;

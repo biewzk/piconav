@@ -2,6 +2,7 @@
 #include "../Config/app_config.h"
 #include "../Utils/page_manager.h"
 #include "../Utils/gps_service.h"
+#include "../Utils/trip_store.h"
 #include "../Utils/log.h"
 #include "../app.h"
 
@@ -15,16 +16,8 @@ typedef struct {
     lv_obj_t *fix_label;     /* "NO FIX" / "GPS n SAT" */
     lv_obj_t *dist_label;
     lv_obj_t *time_label;
+    msg_sub_t *gps_sub;      /* MSG_GPS subscription while visible */
 } dial_priv_t;
-
-/* Trip counters survive page push/pop (the page is destroyed on pop and
- * rebuilt on the next visit); they reset on reboot only. */
-static double   s_trip_km;
-static uint32_t s_move_ms;
-static uint32_t s_last_stamp_ms;   /* 0 = no previous sample in this visit */
-
-/* GPS subscription; at most one instance of this page exists at a time. */
-static msg_sub_t *s_gps_sub;
 
 /* mm:ss (or h:mm:ss once over an hour) for the moving-time card. */
 static void format_duration(uint32_t total_ms, char *buf, size_t len)
@@ -42,7 +35,8 @@ static void format_duration(uint32_t total_ms, char *buf, size_t len)
 
 /*
  * Refresh the dial from a GPS snapshot: speed, fix indicator, and the
- * trip distance/time accumulated between consecutive samples.
+ * trip counters (integrated by trip_store, not by this page - they keep
+ * running while other pages are on top).
  */
 static void dialplate_apply(dial_priv_t *d, const gps_data_t *g)
 {
@@ -59,25 +53,14 @@ static void dialplate_apply(dial_priv_t *d, const gps_data_t *g)
         lv_label_set_text(d->speed_label, "--");
     }
 
-    /* Integrate speed into trip distance / moving time. Only trust gaps
-     * up to 2 s: while the page was hidden no samples were delivered, so
-     * the first sample after on_show only re-seeds s_last_stamp_ms. */
-    if (s_last_stamp_ms && g->stamp_ms != s_last_stamp_ms && g->fix) {
-        uint32_t dt_ms = g->stamp_ms - s_last_stamp_ms;
-        if (dt_ms <= 2000) {
-            s_trip_km += (double)g->speed_kmh * (double)dt_ms / 3600000.0;
-            if (g->speed_kmh >= 1.0f)
-                s_move_ms += dt_ms;
-        }
-    }
-    s_last_stamp_ms = g->stamp_ms;
+    const trip_stats_t *t = trip_store_get();
 
     char tbuf[16];
-    format_duration(s_move_ms, tbuf, sizeof(tbuf));
+    format_duration(t->move_ms, tbuf, sizeof(tbuf));
 
     /* LVGL's lv_snprintf has float support disabled (LV_SPRINTF_USE_FLOAT
      * 0), so format the trip distance with the libc printf instead. */
-    long km100 = (long)(s_trip_km * 100.0 + 0.5);
+    long km100 = (long)(t->trip_km * 100.0 + 0.5);
     char dbuf[40];
     snprintf(dbuf, sizeof(dbuf), "%ld.%02ld km", km100 / 100, km100 % 100);
 
@@ -104,24 +87,23 @@ static void dialplate_on_show(page_t *self)
     if (!d)
         return;
 
-    gps_service_demand(1);
-    s_last_stamp_ms = 0;
+    gps_service_demand_add();
     dialplate_apply(d, app_gps());
 
-    if (!s_gps_sub)
-        s_gps_sub = msg_center_subscribe(app_msg_center(), MSG_GPS,
-                                         dialplate_on_gps, self);
+    if (!d->gps_sub)
+        d->gps_sub = msg_center_subscribe(app_msg_center(), MSG_GPS,
+                                          dialplate_on_gps, self);
 }
 
 static void dialplate_on_hide(page_t *self)
 {
-    (void)self;
-    gps_service_demand(0);
-    if (s_gps_sub) {
-        msg_center_unsubscribe(app_msg_center(), MSG_GPS, s_gps_sub);
-        s_gps_sub = NULL;
+    dial_priv_t *d = self->user;
+
+    gps_service_demand_release();
+    if (d && d->gps_sub) {
+        msg_center_unsubscribe(app_msg_center(), MSG_GPS, d->gps_sub);
+        d->gps_sub = NULL;
     }
-    s_last_stamp_ms = 0;
 }
 
 /*
@@ -187,9 +169,9 @@ static void dialplate_destroy(page_t *self)
 }
 
 /*
- * Key handling: holding ENTER (or LEFT/BACK) pops back to the drawer.
- * The device has no BACK key, so the long-ENTER gesture is the only
- * hardware way out of this page.
+ * Key handling: LEFT/BACK pop back to the drawer; a held ENTER pops via
+ * the page manager's default back gesture, so the page only reacts to
+ * raw arrow keys. The device has no BACK key, but the sim (ESC) does.
  */
 static void dialplate_on_key(page_t *self, const key_event_t *ev)
 {
@@ -199,9 +181,6 @@ static void dialplate_on_key(page_t *self, const key_event_t *ev)
     switch (ev->id) {
     case KEY_BTN_LEFT:
     case KEY_BTN_BACK:
-    case KEY_BTN_ENTER:
-        if (ev->id == KEY_BTN_ENTER && !ev->is_long)
-            break;
         page_manager_pop();
         break;
     default:

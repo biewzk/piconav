@@ -1,0 +1,26 @@
+/*
+ * Symbol export whitelist for the demo host binary (linker version
+ * script). Plugins dlopen()'ed from /data/apps resolve exactly these
+ * symbols; everything else stays private to the executable. HAL is
+ * deliberately NOT exported: it is the sim/device seam, plugins go
+ * through the services (gps_service, config_api, map_view, ...).
+ */
+{
+  global:
+    /* LVGL (compiled into the host; no liblvgl.a for plugins to link) */
+    lv_*;
+    /* app framework + services */
+    app_*;
+    msg_*;
+    page_*;
+    config_*;
+    gps_service_*;
+    trip_store_*;
+    sampler_*;
+    map_view_*;
+    status_bar_*;
+    log_*;
+    /* Mapsforge rendering engine */
+    mf_*;
+  local: *;
+};

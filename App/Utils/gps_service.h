@@ -69,11 +69,13 @@ uint32_t gps_service_interval_ms(void);
  * a dead receiver. */
 uint32_t gps_service_stale_ms(void);
 
-/* Visible-UI demand in seconds (AUTO mode only). Pages call it from
- * on_show with their preferred rate and from on_hide with 0 to fall
- * back to the default. A change takes effect immediately with a fresh
- * sample, so entering a fast page never waits out the old interval. */
-void gps_service_demand(uint32_t sec);
+/* Refcounted fast demand (1 s samples): every visible consumer calls
+ * demand_add() from on_show and demand_release() from on_hide. While
+ * the count is positive the sampler runs at 1 s; at zero AUTO mode
+ * falls back to GPS_DEMAND_DEFAULT_SEC. Entering a fast page forces a
+ * fresh sample so it never waits out the slow interval. */
+void gps_service_demand_add(void);
+void gps_service_demand_release(void);
 
 /* Re-read gps.* from the driver and apply on change. Wired to
  * MSG_CONFIG_CHANGED, which the config watcher publishes within about

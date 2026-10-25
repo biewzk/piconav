@@ -11,6 +11,11 @@ extern "C" {
 /* Global message center, created by app_init(). */
 msg_center_t *app_msg_center(void);
 
+/* Id of the runtime "map.selected" topic (published by the map picker
+ * with the chosen .map path when the user confirms a map). Lazily
+ * registered on first use; MSG_TOPIC_INVALID without the center. */
+msg_topic_t app_topic_map_selected(void);
+
 /* GPS data pool (refreshed by gps_service at the configured sample
  * interval; consumers read it on_show to show data before the next
  * pool refresh). */

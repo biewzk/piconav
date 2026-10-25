@@ -9,6 +9,40 @@ static page_t *s_stack[PAGE_STACK_MAX];
 static int s_depth;
 static msg_sub_t *s_key_sub;
 
+/* ---- page registry ---- */
+
+#define PAGE_REG_MAX 24
+static page_t *s_reg[PAGE_REG_MAX];
+static int s_reg_n;
+
+void page_register(page_t *page)
+{
+    if (!page || !page->name || !page->ops) {
+        LOG_W("page register: bad page");
+        return;
+    }
+    if (page_find(page->name)) {
+        LOG_W("page register: \"%s\" already registered", page->name);
+        return;
+    }
+    if (s_reg_n >= PAGE_REG_MAX) {
+        LOG_W("page register: table full, dropped \"%s\"", page->name);
+        return;
+    }
+    s_reg[s_reg_n++] = page;
+    LOG_D("page register: \"%s\"", page->name);
+}
+
+page_t *page_find(const char *name)
+{
+    if (!name)
+        return NULL;
+    for (int i = 0; i < s_reg_n; i++)
+        if (strcmp(s_reg[i]->name, name) == 0)
+            return s_reg[i];
+    return NULL;
+}
+
 /*
  * ENTER gesture layer: the hardware has only five keys (up/down/left/
  * right/enter), so ENTER doubles as the "back"/secondary key via a
@@ -34,13 +68,23 @@ static void page_deliver(const key_event_t *ev)
         top->ops->on_key(top, ev);
 }
 
-/* ENTER has been held past the threshold: deliver the long-press gesture. */
+/* ENTER has been held past the threshold: by default this pops the top
+ * page (the "hold OK = back" gesture); pages that opted out with
+ * PAGE_FLAG_NO_AUTO_BACK (e.g. the map zooms out on a held ENTER)
+ * receive the long-press event instead. */
 static void enter_long_cb(lv_timer_t *timer)
 {
     s_enter_timer = NULL;
     lv_timer_del(timer);
     if (!s_enter_down)
         return;
+
+    page_t *top = page_manager_top();
+    if (top && !(top->flags & PAGE_FLAG_NO_AUTO_BACK)) {
+        LOG_I("auto back: pop from \"%s\" (long ENTER)", top->name);
+        page_manager_pop();
+        return;
+    }
 
     key_event_t ev = { .id = KEY_BTN_ENTER, .is_press = 1, .is_long = 1 };
     page_deliver(&ev);
@@ -79,6 +123,13 @@ static void page_key_handler(msg_topic_t topic, const void *data, void *user)
         return;
     }
 
+    /*
+     * A long-ENTER threshold either popped the page (default back
+     * gesture, see enter_long_cb) or went to an opt-out page. The
+     * follow-up release event ({press=0, long=1}) is forwarded as
+     * usual: opt-out pages need it to stop hold-to-repeat, the page
+     * that got auto-popped simply ignores it.
+     */
     page_deliver(&ev);
 }
 
@@ -103,6 +154,8 @@ static void page_build(page_t *page)
     lv_obj_clear_flag(page->scr, LV_OBJ_FLAG_SCROLLABLE);
     if (page->ops->create)
         page->ops->create(page);
+    /* The nav parameter only has to live until create() consumed it. */
+    page->param = NULL;
 }
 
 /*
@@ -192,6 +245,23 @@ void page_manager_pop(void)
     if (old->ops->destroy)
         old->ops->destroy(old);
     old->scr = NULL;
+}
+
+/*
+ * Find a registered page by name, hand over the navigation parameter and
+ * push it. The parameter is borrowed: the target page copies it in its
+ * create() callback (page_build clears page->param afterwards).
+ */
+page_t *page_manager_open(const char *name, const char *param)
+{
+    page_t *page = page_find(name);
+    if (!page) {
+        LOG_W("page open: unknown page \"%s\"", name);
+        return NULL;
+    }
+    page->param = param;
+    page_manager_push(page);
+    return page;
 }
 
 /* Return the current (top) page, or NULL if the stack is empty. */
