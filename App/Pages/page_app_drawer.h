@@ -6,11 +6,11 @@
 /* Build the app drawer UI on the given parent object. */
 void app_drawer_create(lv_obj_t *parent);
 
-/* Replay the staggered row entrance animation (call when the drawer
- * panel becomes visible). */
-void app_drawer_play_entrance(void);
+/* Mark the drawer panel visible/hidden (gates the 1 s live-data
+ * refresh and re-asserts focus + scroll position on show). */
+void app_drawer_set_visible(int on);
 
-/* Update the selected item highlight. */
+/* Update the selected item (focus style + scroll-to-center). */
 void app_drawer_set_sel(int sel);
 
 /* Get the current selection index. */

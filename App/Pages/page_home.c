@@ -133,8 +133,7 @@ static void home_switch_panel(home_priv_t *d, int new_idx, int dir)
     lv_anim_start(&a_in);
 
     d->cur = new_idx;
-    if (new_idx == PANEL_APP_DRAWER)
-        app_drawer_play_entrance();
+    app_drawer_set_visible(new_idx == PANEL_APP_DRAWER);
     LOG_I("carousel: panel %d -> %d", old_idx, new_idx);
 }
 
@@ -294,9 +293,8 @@ static void home_on_show(page_t *self)
         lv_obj_set_x(d->panels[i], x);
     }
     clock_start(d);
-    /* Returning from a pushed app re-runs the drawer entrance */
-    if (d->cur == PANEL_APP_DRAWER)
-        app_drawer_play_entrance();
+    /* Returning from a pushed app re-asserts drawer focus + scroll */
+    app_drawer_set_visible(d->cur == PANEL_APP_DRAWER);
     /* Play the entrance animation */
     if (d->entrance_anim)
         lv_anim_timeline_start(d->entrance_anim);
@@ -306,7 +304,7 @@ static void home_on_hide(page_t *self)
 {
     home_priv_t *d = self->user;
     clock_stop(d);
-    (void)d;
+    app_drawer_set_visible(0);
 }
 
 /* ---------- key handling ---------- */

@@ -1,199 +1,259 @@
 #include "page_app_drawer.h"
 #include "app_registry.h"
+#include "../Utils/trip_store.h"
+#include "../Utils/config_api.h"
 #include "../Config/app_config.h"
+#include "../app.h"
 
-#include <stdlib.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 LV_FONT_DECLARE(lv_font_app_16);
 
 /*
- * X-TRACK style launcher: full-width rows of icon tile + app name, a
- * sliding highlight bar and a staggered slide-in entrance animation
- * every time the drawer becomes visible.
+ * App drawer, X-TRACK SystemInfos style: a vertical rolling list. The
+ * root is a flex column with pad = (screen - item) / 2 so the focused
+ * item scrolls to the middle while its neighbours peek above and below.
+ * Every item is a full-width BLACK icon box (app tile + name, flex
+ * column) laid OVER grey info / white data labels; focusing an item
+ * animates its icon box width 220 -> 70 (overshoot), revealing the
+ * data column and an orange right-edge accent. Focus moves with
+ * UP/DOWN and the list scrolls (LVGL scroll anim) to keep it centered.
  *
- * Text uses lv_font_app_16, a generated bitmap font subset (ASCII +
- * the CJK glyphs the UI actually uses; montserrat renders Chinese as
- * blanks and lv_font_simsun_16_cjk misses most of them).
+ * Names are CJK (lv_font_app_16); info/data columns are ASCII, matching
+ * the X-TRACK reference.
  */
 
-#define ITEM_H   50
-#define TITLE_H  40
-#define ROW_H    46
-#define ROW_X    8
-#define ICON_SZ  40
-#define HIGHLIGHT_ANIM_TIME 200
-#define ENTRANCE_ITEM_MS    280
-#define ENTRANCE_STAGGER_MS 60
-#define ENTRANCE_FROM_DX    44
+#define ITEM_H        130
+#define ITEM_PAD      ((APP_SCR_VER - ITEM_H) / 2)   /* 95 */
+#define ITEM_W        220
+#define ICON_W_FULL   220    /* covers the data column of idle items */
+#define ICON_W_FOCUS  70     /* reveals info + data on the focused item */
+#define INFO_X        76
+#define DATA_X        150
 
-#define C_BG      0x0f0f1a
-#define C_SEL     0x00c2ff
-#define C_ITEM    0xdddddd
-#define C_HL      0x223344
-#define C_HINT    0x555555
+#define ACCENT        0xff931e   /* X-TRACK focus edge */
+#define C_LIST_BG     0x000000
+#define C_INFO        0x999999
+#define C_DATA        0xffffff
 
-/* "ying yong" - drawer title, UTF-8 escapes (code stays ASCII) */
-#define TXT_TITLE "\xE5\xBA\x94\xE7\x94\xA8"
-/* "UP/DOWN:xuan ze   OK:da kai" - key hint, UTF-8 escapes */
-#define TXT_HINT  "UP/DOWN:\xE9\x80\x89\xE6\x8B\xA9   OK:\xE6\x89\x93\xE5\xBC\x80"
+#define MAX_ITEMS 16
 
-static lv_obj_t *s_rows[16];     /* row container per app entry */
-static lv_obj_t *s_names[16];    /* name label inside the row   */
-static lv_obj_t *s_highlight;    /* sliding highlight bar */
-static lv_anim_t s_sel_anim;     /* highlight slide animation */
-static int       s_count;        /* number of apps */
-static int       s_sel;          /* current selection */
+static lv_obj_t *s_root;         /* scrollable flex column */
+static lv_obj_t *s_items[MAX_ITEMS];
+static lv_obj_t *s_icons[MAX_ITEMS];
+static lv_obj_t *s_data[MAX_ITEMS];
+static lv_style_t s_style_icon;  /* full-width black box, shared */
+static lv_style_t s_style_focus; /* focused: narrow + orange edge */
+static lv_style_t s_style_info;
+static lv_style_t s_style_data;
+static int s_count;
+static int s_sel;
+static lv_timer_t *s_timer;
+static int s_visible;
 
-static void highlight_anim_cb(void *var, int32_t val)
+static void data_refresh(void);
+
+/* ---------- shared styles (initialized once) ---------- */
+
+static void styles_init(void)
 {
-    lv_obj_set_y((lv_obj_t *)var, val);
+    static bool done;
+
+    if (done)
+        return;
+    done = true;
+
+    /* idle icon box: covers the whole item (hides the data column) */
+    lv_style_init(&s_style_icon);
+    lv_style_set_width(&s_style_icon, ICON_W_FULL);
+    lv_style_set_bg_color(&s_style_icon, lv_color_black());
+    lv_style_set_bg_opa(&s_style_icon, LV_OPA_COVER);
+    lv_style_set_text_font(&s_style_icon, &lv_font_app_16);
+    lv_style_set_text_color(&s_style_icon, lv_color_white());
+
+    /* focused icon box: shrinks, orange accent on the right edge */
+    lv_style_init(&s_style_focus);
+    lv_style_set_width(&s_style_focus, ICON_W_FOCUS);
+    lv_style_set_border_side(&s_style_focus, LV_BORDER_SIDE_RIGHT);
+    lv_style_set_border_width(&s_style_focus, 2);
+    lv_style_set_border_color(&s_style_focus, lv_color_hex(ACCENT));
+
+    /* width 220 <-> 70 with the X-TRACK overshoot bounce */
+    static const lv_style_prop_t trans_props[] = {
+        LV_STYLE_WIDTH,
+        LV_STYLE_PROP_INV,
+    };
+    static lv_style_transition_dsc_t trans;
+    lv_style_transition_dsc_init(&trans, trans_props,
+                                 lv_anim_path_overshoot, 200, 0, NULL);
+    lv_style_set_transition(&s_style_focus, &trans);
+    lv_style_set_transition(&s_style_icon, &trans);
+
+    lv_style_init(&s_style_info);
+    lv_style_set_text_font(&s_style_info, &lv_font_app_16);
+    lv_style_set_text_color(&s_style_info, lv_color_hex(C_INFO));
+
+    lv_style_init(&s_style_data);
+    lv_style_set_text_font(&s_style_data, &lv_font_app_16);
+    lv_style_set_text_color(&s_style_data, lv_color_hex(C_DATA));
 }
 
-static void row_x_anim_cb(void *var, int32_t val)
-{
-    lv_obj_set_x((lv_obj_t *)var, val);
-}
+/* ---------- live data columns ---------- */
 
-static void row_opa_anim_cb(void *var, int32_t val)
+static void data_refresh(void)
 {
-    lv_obj_set_style_opa((lv_obj_t *)var, (lv_opa_t)val, 0);
-}
+    char buf[64];
 
-/* Animate the highlight bar to the selected item's position. */
-static void highlight_slide_to(int sel)
-{
-    if (!s_highlight || sel < 0 || sel >= s_count)
+    if (s_count < 2)
         return;
 
-    int target_y = TITLE_H + 2 + sel * ITEM_H;
+    /* trip dialplate: session counters */
+    const trip_stats_t *trip = trip_store_get();
+    unsigned move_s = trip->move_ms / 1000;
+    snprintf(buf, sizeof(buf), "%.2fkm\n%02u:%02u",
+             trip->trip_km, move_s / 60, move_s % 60);
+    lv_label_set_text(s_data[0], buf);
 
-    lv_anim_del(s_highlight, highlight_anim_cb);
-
-    lv_anim_init(&s_sel_anim);
-    lv_anim_set_var(&s_sel_anim, s_highlight);
-    lv_anim_set_values(&s_sel_anim, lv_obj_get_y(s_highlight), target_y);
-    lv_anim_set_time(&s_sel_anim, HIGHLIGHT_ANIM_TIME);
-    lv_anim_set_exec_cb(&s_sel_anim, highlight_anim_cb);
-    lv_anim_set_path_cb(&s_sel_anim, lv_anim_path_ease_out);
-    lv_anim_start(&s_sel_anim);
+    /* GPS receiver: live position (dash it out without a fix) */
+    const gps_data_t *g = app_gps();
+    if (g->stamp_ms != 0 && g->fix) {
+        snprintf(buf, sizeof(buf), "%.4f\n%.4f\n%u %s",
+                 (double)g->lat, (double)g->lon,
+                 (unsigned)g->sats,
+                 g->fix_type == 3 ? "3D" :
+                 g->fix_type == 2 ? "2D" : "FIX");
+    } else {
+        snprintf(buf, sizeof(buf), "--\n--\n--");
+    }
+    lv_label_set_text(s_data[1], buf);
 }
 
-static void drawer_paint(void)
+static void timer_cb(lv_timer_t *timer)
 {
-    for (int i = 0; i < s_count && i < 16; i++)
-        lv_obj_set_style_text_color(s_names[i],
-            (i == s_sel) ? lv_color_hex(C_SEL) : lv_color_hex(C_ITEM), 0);
-    highlight_slide_to(s_sel);
+    (void)timer;
+    if (s_visible)
+        data_refresh();
 }
+
+/* ---------- item builder ---------- */
 
 /*
- * Staggered slide-in of the app rows (X-TRACK app list entrance):
- * every row starts shifted right and transparent, then eases into
- * place, one after another.
+ * One list item: full-width black icon box (tile + name) over the grey
+ * info / white data labels. The icon box stays the topmost child;
+ * focusing shrinks it and uncovers the columns (X-TRACK's trick).
  */
-void app_drawer_play_entrance(void)
+static void item_build(int i, const app_entry_t *app, const char *info)
 {
-    for (int i = 0; i < s_count && i < 16; i++) {
-        lv_obj_t *row = s_rows[i];
-        lv_anim_t a;
+    lv_obj_t *cont = lv_obj_create(s_root);
+    lv_obj_remove_style_all(cont);
+    lv_obj_set_size(cont, ITEM_W, ITEM_H);
+    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    s_items[i] = cont;
 
-        lv_anim_del(row, row_x_anim_cb);
-        lv_anim_del(row, row_opa_anim_cb);
-        lv_obj_set_x(row, ROW_X + ENTRANCE_FROM_DX);
-        lv_obj_set_style_opa(row, LV_OPA_TRANSP, 0);
+    /* icon box */
+    lv_obj_t *icon = lv_obj_create(cont);
+    lv_obj_remove_style_all(icon);
+    lv_obj_add_style(icon, &s_style_icon, 0);
+    lv_obj_add_style(icon, &s_style_focus, LV_STATE_FOCUSED);
+    lv_obj_set_style_align(icon, LV_ALIGN_LEFT_MID, 0);
+    lv_obj_clear_flag(icon, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(icon, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(icon, LV_FLEX_ALIGN_SPACE_AROUND,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    s_icons[i] = icon;
 
-        lv_anim_init(&a);
-        lv_anim_set_var(&a, row);
-        lv_anim_set_values(&a, ROW_X + ENTRANCE_FROM_DX, ROW_X);
-        lv_anim_set_time(&a, ENTRANCE_ITEM_MS);
-        lv_anim_set_delay(&a, i * ENTRANCE_STAGGER_MS);
-        lv_anim_set_exec_cb(&a, row_x_anim_cb);
-        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-        lv_anim_start(&a);
-
-        lv_anim_init(&a);
-        lv_anim_set_var(&a, row);
-        lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-        lv_anim_set_time(&a, ENTRANCE_ITEM_MS);
-        lv_anim_set_delay(&a, i * ENTRANCE_STAGGER_MS);
-        lv_anim_set_exec_cb(&a, row_opa_anim_cb);
-        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
-        lv_anim_start(&a);
+    if (app->img) {
+        lv_obj_t *img = lv_img_create(icon);
+        lv_img_set_src(img, app->img);
+    } else {
+        /* letter-glyph fallback for plugins without an icon image */
+        lv_obj_t *g = lv_label_create(icon);
+        lv_label_set_text(g, app->icon ? app->icon : "?");
+        lv_obj_set_style_text_font(g, &lv_font_montserrat_24, 0);
+        lv_obj_set_style_text_color(g, lv_color_hex(app->icon_color), 0);
     }
+
+    lv_obj_t *lbl = lv_label_create(icon);
+    lv_label_set_text(lbl, app->name);
+
+    /* info + data columns (revealed on focus) */
+    lbl = lv_label_create(cont);
+    lv_label_set_text(lbl, info ? info : "");
+    lv_obj_add_style(lbl, &s_style_info, 0);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, INFO_X, 0);
+
+    lbl = lv_label_create(cont);
+    lv_label_set_text(lbl, "-");
+    lv_obj_add_style(lbl, &s_style_data, 0);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, DATA_X, 0);
+    s_data[i] = lbl;
+
+    lv_obj_move_foreground(icon);
 }
+
+/* ---------- public API ---------- */
 
 void app_drawer_create(lv_obj_t *parent)
 {
-    lv_obj_set_style_bg_color(parent, lv_color_hex(C_BG), 0);
-    lv_obj_clear_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
+    styles_init();
 
-    /* Title */
-    lv_obj_t *title = lv_label_create(parent);
-    lv_label_set_text(title, TXT_TITLE);
-    lv_obj_set_style_text_font(title, &lv_font_app_16, 0);
-    lv_obj_set_style_text_color(title, lv_color_hex(C_SEL), 0);
-    lv_obj_set_style_text_letter_space(title, 4, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_style_bg_color(parent, lv_color_hex(C_LIST_BG), 0);
+    lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
-    /* Highlight bar (created first so it sits behind the rows) */
-    s_highlight = lv_obj_create(parent);
-    lv_obj_set_size(s_highlight, APP_SCR_HOR - 16, ROW_H);
-    lv_obj_set_pos(s_highlight, ROW_X, TITLE_H + 2);
-    lv_obj_set_style_bg_color(s_highlight, lv_color_hex(C_HL), 0);
-    lv_obj_set_style_bg_opa(s_highlight, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(s_highlight, 8, 0);
-    lv_obj_set_style_border_width(s_highlight, 0, 0);
-    lv_obj_clear_flag(s_highlight, LV_OBJ_FLAG_SCROLLABLE);
+    /* rolling list root: the pad centers the focused item */
+    s_root = lv_obj_create(parent);
+    lv_obj_remove_style_all(s_root);
+    lv_obj_set_size(s_root, APP_SCR_HOR, APP_SCR_VER);
+    lv_obj_set_style_pad_ver(s_root, ITEM_PAD, 0);
+    lv_obj_set_flex_flow(s_root, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_root, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_scrollbar_mode(s_root, LV_SCROLLBAR_MODE_OFF);
 
-    /* App rows */
+    /* info columns of the built-ins (order = registry order); short
+     * words: our 16 px font is wider than the X-TRACK reference font.
+     * plugins get an empty column */
+    static const char *infos[] = {
+        "Trip\nMoving",             /* trip dialplate */
+        "Lat\nLon\nSats",
+        "Map",                      /* map (data = selected file) */
+        "Firmware\nTheme",          /* settings */
+        "OK\nDOWN",                 /* stopwatch */
+    };
+
     s_count = app_registry_count();
-    for (int i = 0; i < s_count && i < 16; i++) {
-        app_entry_t *app = app_registry_get(i);
-
-        lv_obj_t *row = lv_obj_create(parent);
-        lv_obj_set_size(row, APP_SCR_HOR - 16, ROW_H);
-        lv_obj_set_pos(row, ROW_X, TITLE_H + 2 + i * ITEM_H);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_pad_all(row, 0, 0);
-        s_rows[i] = row;
-
-        if (app->img) {
-            lv_obj_t *ic = lv_img_create(row);
-            lv_img_set_src(ic, app->img);
-            lv_obj_align(ic, LV_ALIGN_LEFT_MID, 0, 0);
-        } else {
-            /* Letter-glyph fallback for plugins without an icon image */
-            lv_obj_t *g = lv_label_create(row);
-            lv_label_set_text(g, app->icon ? app->icon : "?");
-            lv_obj_set_style_text_font(g, &lv_font_montserrat_24, 0);
-            lv_obj_set_style_text_color(g, lv_color_hex(app->icon_color), 0);
-            lv_obj_set_width(g, ICON_SZ);
-            lv_obj_set_style_text_align(g, LV_TEXT_ALIGN_CENTER, 0);
-            lv_obj_align(g, LV_ALIGN_LEFT_MID, 0, 0);
-        }
-
-        lv_obj_t *lbl = lv_label_create(row);
-        lv_label_set_text(lbl, app->name);
-        lv_obj_set_style_text_font(lbl, &lv_font_app_16, 0);
-        lv_obj_set_style_text_letter_space(lbl, 2, 0);
-        lv_obj_set_width(lbl, APP_SCR_HOR - 16 - 52 - 8);
-        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 52, 0);
-        s_names[i] = lbl;
-    }
-
-    /* Hint */
-    lv_obj_t *hint = lv_label_create(parent);
-    lv_label_set_text(hint, TXT_HINT);
-    lv_obj_set_style_text_font(hint, &lv_font_app_16, 0);
-    lv_obj_set_style_text_color(hint, lv_color_hex(C_HINT), 0);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+    for (int i = 0; i < s_count && i < MAX_ITEMS; i++)
+        item_build(i, app_registry_get(i),
+                   i < (int)(sizeof(infos) / sizeof(infos[0])) ?
+                   infos[i] : NULL);
 
     s_sel = 0;
-    drawer_paint();
+    if (s_count > 0)
+        lv_obj_add_state(s_icons[0], LV_STATE_FOCUSED);
+
+    /* static data columns for the non-live items */
+    if (s_count > 2) {
+        char sel[256], *dot;
+        const char *slash;
+
+        config_init();
+        config_get_str(APP_CFG_KEY_MAP_SELECTED, sel, sizeof(sel), "");
+        slash = strrchr(sel, '/');
+        dot = strrchr(slash ? slash : sel, '.');
+        if (dot)
+            *dot = '\0';
+        lv_label_set_text(s_data[2], slash ? slash + 1 :
+                          (sel[0] ? sel : "None"));
+    }
+    if (s_count > 3)
+        lv_label_set_text(s_data[3], "pico_nav\nDark");
+    if (s_count > 4)
+        lv_label_set_text(s_data[4], "Start/Stop\nReset");
+
+    s_timer = lv_timer_create(timer_cb, 1000, NULL);
+    data_refresh();
 }
 
 void app_drawer_set_sel(int sel)
@@ -204,11 +264,35 @@ void app_drawer_set_sel(int sel)
         sel = s_count - 1;
     if (sel >= s_count)
         sel = 0;
+    if (sel == s_sel)
+        return;
+
+    lv_obj_clear_state(s_icons[s_sel], LV_STATE_FOCUSED);
     s_sel = sel;
-    drawer_paint();
+    lv_obj_add_state(s_icons[s_sel], LV_STATE_FOCUSED);
+
+    /* Scroll the item to center: child y is content-relative, so
+     * scrolling by it lands the item at the pad offset (= center).
+     * Same formula as the X-TRACK reference. */
+    lv_obj_scroll_to_y(s_root, lv_obj_get_y(s_items[s_sel]), LV_ANIM_ON);
 }
 
 int app_drawer_get_sel(void)
 {
     return s_sel;
+}
+
+/* Called by home when the drawer panel becomes visible / hidden. */
+void app_drawer_set_visible(int on)
+{
+    s_visible = on ? 1 : 0;
+    if (on && s_root && s_count > 0) {
+        /* re-assert focus + position (e.g. after returning from an app) */
+        for (int i = 0; i < s_count && i < MAX_ITEMS; i++)
+            lv_obj_clear_state(s_icons[i], LV_STATE_FOCUSED);
+        lv_obj_add_state(s_icons[s_sel], LV_STATE_FOCUSED);
+        lv_obj_scroll_to_y(s_root, lv_obj_get_y(s_items[s_sel]),
+                           LV_ANIM_OFF);
+        data_refresh();
+    }
 }
