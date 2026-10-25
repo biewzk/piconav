@@ -3,6 +3,7 @@
 #include "Utils/gps_service.h"
 #include "Utils/trip_store.h"
 #include "Utils/config_watcher.h"
+#include "Utils/plugin_manager.h"
 #include "Utils/log.h"
 #include "Pages/pages_builtin.h"
 #include "../HAL/hal.h"
@@ -59,6 +60,7 @@ void app_init(void)
     config_watcher_init(s_mc);
 
     pages_builtin_register();
+    plugin_manager_init();
     page_manager_open("home", NULL);
     LOG_I("pushed home page (depth=%d)", page_manager_depth());
 }

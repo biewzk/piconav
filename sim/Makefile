@@ -63,7 +63,7 @@ $(OBJ_DIR)/sim/%.o: ../%.c
 default: $(TARGET)
 	@mkdir -p $(BIN_DIR)
 	$(CC) -o $(BIN_DIR)/$(BIN) $(TARGET) $(LDFLAGS) \
-	      -Wl,--version-script=$(CURDIR)/../app.exports
+	      -Wl,--export-dynamic -Wl,--version-script=$(CURDIR)/../app.exports
 	@echo ""
 	@echo "Build done: $(BIN_DIR)/$(BIN)"
 	@echo "Run: cd sim && ./build_sim/bin/pico_nav_sim"

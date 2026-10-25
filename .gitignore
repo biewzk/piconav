@@ -2,3 +2,5 @@ build/
 sim/build_sim/
 .vscode/
 resources/*.osm.pbf
+plugins/stopwatch/build/
+plugins/stopwatch/build_sim/

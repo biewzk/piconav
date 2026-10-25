@@ -9,6 +9,10 @@
  * Override at runtime with the MF_MAP_DIR environment variable. */
 #define APP_MAP_DIR_DEFAULT "/data/maps"
 
+/* Directory scanned at boot for plugin .so files (data partition, so
+ * plugins survive OTA). Override at runtime with PICO_NAV_APPS. */
+#define APP_PLUGIN_DIR_DEFAULT "/data/apps"
+
 /* Display buffer: full-screen RGB565 */
 #define APP_DISP_BUF   (APP_SCR_HOR * APP_SCR_VER)
 
