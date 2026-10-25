@@ -2,13 +2,18 @@
 #define APP_REGISTRY_H
 
 #include "../Utils/page_manager.h"
+#include "lvgl.h"
 #include <stdint.h>
 
 typedef struct {
     const char *name;
-    const char *icon;
-    uint32_t    icon_color;
+    const char *icon;              /* letter glyph fallback (no img)  */
+    uint32_t    icon_color;        /* letter glyph color              */
     page_t     *page;
+    /* Full icon image (40x40 rounded tile, see Utils/app_icons.h).
+     * NULL = fall back to the letter glyph. Plugins reference the
+     * host's app_icon_* images by name. */
+    const lv_img_dsc_t *img;
 } app_entry_t;
 
 /*

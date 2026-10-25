@@ -29,12 +29,15 @@ extern "C" {
  * A successful plugin stays loaded for the app lifetime - never assume
  * unloading. A failing one is dlclose()d and skipped, the host keeps
  * running. Build pages as page_t with static storage and register them
- * via page_register(); add drawer entries via app_registry_add().
+ * via page_register(); add drawer entries via app_registry_add() -
+ * entries can point at the host's app_icon_* images for their icon.
  */
 
 /* Bump when the exported API surface changes shape (struct layout,
- * function signatures). Host and plugin must agree on this number. */
-#define PLUGIN_ABI_VERSION 1
+ * function signatures). Host and plugin must agree on this number.
+ * History: 1 - initial contract; 2 - app_entry_t gained the img
+ * field (drawer icon image, ABI 1 plugins are skipped until rebuilt). */
+#define PLUGIN_ABI_VERSION 2
 
 #ifdef __cplusplus
 }

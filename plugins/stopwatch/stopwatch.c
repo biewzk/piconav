@@ -148,15 +148,22 @@ static page_t stopwatch_page = {
 
 /* ---- plugin contract ---- */
 
+/* Drawer icon from the host (app_icon_* symbols are exported; see
+ * PLUGIN_SDK.md for the available icons). */
+extern const lv_img_dsc_t app_icon_stopwatch_img;
+
 const uint32_t plugin_abi_version = PLUGIN_ABI_VERSION;
 const char *plugin_name    = "stopwatch";
-const char *plugin_version = "1.0.0";
+const char *plugin_version = "1.1.0";
 
 int plugin_init(void)
 {
     static const app_entry_t entry = {
-        "\xE7\xA7\x92\xE8\xA1\xA8",   /* UI label (UTF-8) */
-        "T", 0xFFD600, &stopwatch_page,
+        .name = "\xE7\xA7\x92\xE8\xA1\xA8",   /* UI label (UTF-8) */
+        .icon = "T",
+        .icon_color = 0xFFD600,
+        .page = &stopwatch_page,
+        .img  = &app_icon_stopwatch_img,
     };
 
     page_register(&stopwatch_page);

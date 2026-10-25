@@ -1,16 +1,19 @@
 #ifndef PAGE_GPS_H
 #define PAGE_GPS_H
 
-#include "lvgl.h"
+#include "../Utils/page_manager.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* GPS receiver status panel: sky plot + SNR bars + position details,
- * 240x320 including the status bar. Shown as the third home carousel
- * panel (its own screen; deliberately NOT an entry in the app drawer). */
-void page_gps_panel_create(lv_obj_t *parent);
+/*
+ * GPS receiver status page: sky plot + SNR bars + position details,
+ * 240x320 including the status bar. A regular drawer app: pushed from
+ * the launcher, exited with the long-ENTER back gesture (or LEFT).
+ * Claims a fast (1 s) GPS sample slot while shown.
+ */
+extern page_t page_gps;
 
 #ifdef __cplusplus
 }

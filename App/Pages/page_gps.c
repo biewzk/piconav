@@ -363,11 +363,61 @@ static void gps_on_delete(lv_event_t *e)
     }
 }
 
-/* ---------- build ---------- */
+/* ---------- page lifecycle ---------- */
 
-void page_gps_panel_create(lv_obj_t *parent)
+static void page_gps_build(lv_obj_t *p);   /* builder below */
+
+/*
+ * Page shell around the fixed-geometry builder: the UI is built once
+ * into the page screen, GPS data is applied by a 1 s timer (values
+ * change at the NMEA rate, staleness needs a tick).
+ */
+static void gps_page_create(page_t *self)
 {
-    lv_obj_t *p = parent;
+    lv_obj_t *p = self->scr;
+    page_gps_build(p);
+    lv_obj_add_event_cb(p, gps_on_delete, LV_EVENT_DELETE, NULL);
+}
+
+static void gps_page_on_show(page_t *self)
+{
+    (void)self;
+    gps_service_demand_add();
+    gps_apply();
+}
+
+static void gps_page_on_hide(page_t *self)
+{
+    (void)self;
+    gps_service_demand_release();
+}
+
+/* LEFT pops back to the drawer; long ENTER pops via the page manager's
+ * default back gesture. */
+static void gps_page_on_key(page_t *self, const key_event_t *ev)
+{
+    (void)self;
+    if (!ev->is_press)
+        return;
+    if (ev->id == KEY_BTN_LEFT || ev->id == KEY_BTN_BACK)
+        page_manager_pop();
+}
+
+page_t page_gps = {
+    .name = "gps",
+    .ops  = &(page_ops_t){
+        .create  = gps_page_create,
+        .destroy = NULL,
+        .on_show = gps_page_on_show,
+        .on_hide = gps_page_on_hide,
+        .on_key  = gps_page_on_key,
+    },
+};
+
+/* ---------- build (fixed geometry from the reviewed SVG design) ---------- */
+
+static void page_gps_build(lv_obj_t *p)
+{
     lv_obj_set_style_bg_color(p, lv_color_hex(C_BG), 0);
     lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
 
@@ -485,6 +535,5 @@ void page_gps_panel_create(lv_obj_t *parent)
 
     /* 1 s refresh: values change at the NMEA rate, staleness needs a tick */
     s_gps.timer = lv_timer_create(gps_timer_cb, 1000, NULL);
-    lv_obj_add_event_cb(p, gps_on_delete, LV_EVENT_DELETE, NULL);
     gps_apply();
 }

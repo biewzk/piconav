@@ -44,8 +44,14 @@ int plugin_init(void)
 {
     /* 1. 注册页面 */
     page_register(&my_page);
-    /* 2. 注册抽屉条目（icon 是单字符, montserrat 字体渲染） */
-    static const app_entry_t entry = { "My App", "A", 0x00C2FF, &my_page };
+    /* 2. 注册抽屉条目：img 指向宿主图标（见下），icon 单字符仅作为
+     *    无图时的兜底字母（montserrat 渲染） */
+    static const app_entry_t entry = {
+        .name = "\xE6\x88\x91\xE7\x9A\x84\xE5\xBA\x94\xE7\x94\xA8",   /* 我的应用 */
+        .icon = "A", .icon_color = 0x00C2FF,
+        .page = &my_page,
+        .img  = &app_icon_gps_img,   /* extern const lv_img_dsc_t */
+    };
     if (app_registry_add(&entry) < 0)
         return -1;
     return 0;
@@ -55,6 +61,15 @@ int plugin_init(void)
 - `plugin_abi_version` 必须等于宿主的 `PLUGIN_ABI_VERSION`。导出 API
   的结构体布局/函数签名变化时版本号 +1，旧插件会被明确拒载
   （日志 `ABI %u, host expects %u`），重新编译即可。
+  **当前 ABI = 2**：`app_entry_t` 增加了 `img`（图标图像）字段。
+- **抽屉图标**：宿主内置了一批 40x40 圆角图标（`App/Utils/app_icons.h`，
+  `tools/gen_app_icons.py` 生成），通过 `app_*` 导出符号直接引用：
+  `app_icon_trip_img`（行车）、`app_icon_gps_img`（GPS）、
+  `app_icon_map_img`（地图）、`app_icon_settings_img`（设置）、
+  `app_icon_stopwatch_img`（秒表）。声明
+  `extern const lv_img_dsc_t app_icon_xxx_img;` 后赋给 `entry.img`；
+  置 NULL 时抽屉回退显示 `icon` 字母。注意宿主固件删改图标名会使
+  插件 dlopen 失败（仅跳过该插件，宿主不受影响）。
 - `plugin_init()` 在 dlopen 后立即调用一次；失败返回非 0。
 - 页面生命周期与内置页面完全一致：`create/destroy/on_show/on_hide/
   on_key`（`page_manager.h`）。长按 ENTER=返回是 page_manager 的默认
@@ -62,9 +77,10 @@ int plugin_init(void)
   `PAGE_FLAG_NO_AUTO_BACK`。
 - 页面参数：`page_manager_open(name, param)` 的 `param` 指针在
   `create()` 内有效（随后被清除），需要在 create 里拷贝进私有数据。
-- **UI 字符串注意**：内置字体（Montserrat）无 CJK 字形，中文标签不会
-  显示；如需中文界面文本需自带字体或用转义字节嵌入（参考秒表插件的
-  UTF-8 转义写法）。
+- **UI 字符串注意**：内置 Montserrat 无 CJK 字形，中文标签不会显示。
+  抽屉条目名请使用宿主的 `lv_font_app_16`（ASCII + 现有 UI 用到的
+  汉字子集；**不在子集内的汉字同样不显示**）或自带字体；UTF-8 转义
+  字节写法参考秒表插件。
 
 ## 3. 编译
 
@@ -167,3 +183,8 @@ msg_topic_t t = msg_topic_register(app_msg_center(), "myapp.alert");
 page_t/page_ops_t 布局变化、app_entry_t 布局变化、任何导出函数签名
 变化。仅新增导出函数/新页面名不破坏 ABI，可不变。固件侧同步在
 PLUGIN_SDK.md 与根 AGENTS.md 记录。
+
+历史：**1** 初始契约 → **2** `app_entry_t` 增加 `img` 图标字段
+（rootfs 1.9.12 / pkg 1.0.10）。ABI 1 的 .so 在新固件上会被拒载，
+重新编译上传即可；OTA 不会清除 `/data/apps`，旧 .so 会一直留在那里
+直到被同名上传覆盖。

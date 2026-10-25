@@ -88,10 +88,9 @@ static void mapselect_paint(mapselect_priv_t *d)
 
 /*
  * Persist the choice, publish it on the runtime "map.selected" topic
- * (the map panel swaps the file live) and pop back. The map page itself
- * is a home carousel panel - not opened from here. A failed persist
- * (e.g. no /dev/config in the simulator) only logs: the picked map
- * still applies for this session.
+ * (a live map page already open swaps the file) and open the map page
+ * with the picked path. A failed persist (e.g. no /dev/config in the
+ * simulator) only logs: the picked map still applies for this session.
  */
 static void mapselect_open(mapselect_priv_t *d)
 {
@@ -107,7 +106,7 @@ static void mapselect_open(mapselect_priv_t *d)
         msg_center_publish(app_msg_center(), t, path);
 
     LOG_I("mapselect: selected %s", path);
-    page_manager_pop();
+    page_manager_open("livemap", path);
 }
 
 /*
