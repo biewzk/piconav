@@ -219,6 +219,12 @@ uint32_t gps_service_stale_ms(void)
     return t > GPS_STALE_FLOOR_MS ? t : GPS_STALE_FLOOR_MS;
 }
 
+int gps_service_is_fresh(const gps_data_t *g)
+{
+    return g && g->stamp_ms != 0 &&
+           hal_tick_get() - g->stamp_ms <= gps_service_stale_ms();
+}
+
 const gps_data_t *gps_service_data(void)
 {
     return &s_pool;

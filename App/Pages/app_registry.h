@@ -14,6 +14,14 @@ typedef struct {
      * NULL = fall back to the letter glyph. Plugins reference the
      * host's app_icon_* images by name. */
     const lv_img_dsc_t *img;
+    /* Drawer preview columns (X-TRACK rolling-list style), revealed on
+     * focus. info: static grey lines (e.g. "Lat\nLon\nSats"), data:
+     * static white column used only when data_get is NULL, data_get:
+     * called about once a second while the drawer is visible and fills
+     * the white column (ASCII, '\n' line breaks). All may be NULL. */
+    const char *info;
+    const char *data;
+    void (*data_get)(char *buf, int len);
 } app_entry_t;
 
 /*

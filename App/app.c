@@ -16,16 +16,6 @@ msg_center_t *app_msg_center(void)
     return s_mc;
 }
 
-/* Id of the runtime "map.selected" topic, registered on first use. */
-msg_topic_t app_topic_map_selected(void)
-{
-    static msg_topic_t t = MSG_TOPIC_INVALID;
-
-    if (t == MSG_TOPIC_INVALID && s_mc)
-        t = msg_topic_register(s_mc, "map.selected");
-    return t;
-}
-
 /* Return the GPS data pool (refreshed by gps_service at the configured
  * sample interval, not per NMEA sentence). */
 const gps_data_t *app_gps(void)

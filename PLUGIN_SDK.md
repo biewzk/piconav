@@ -7,16 +7,19 @@ pico_nav 的 GUI 支持把"应用"做成可安装的插件：一个 `.so` 文件
 ## 1. 架构一览
 
 ```
-demo (宿主, /usr/bin/demo)
+demo (宿主, /usr/bin/demo, 核心=系统UI: 表盘+抽屉+设置)
  ├─ 导出白名单 (app.exports): lv_* / app_* / msg_* / page_* / config_*
- │   / gps_service_* / trip_store_* / sampler_* / map_view_* / mf_*
- │   / status_bar_* / log_*
+ │   / gps_service_* / trip_store_* / sampler_* / status_bar_* / log_*
  ├─ page_manager: page_register() 注册页面, page_manager_open() 按名导航
  ├─ app_registry: app_registry_add() 注册抽屉条目
  ├─ plugin_manager: 启动时扫描 /data/apps/*.so → dlopen → ABI 校验
  │   → plugin_init()
  └─ /data/apps/*.so        ← webctl 上传安装（/data 不参与 A/B，OTA 不清）
 ```
+
+官方插件（独立 git 仓库，同目录安装方式）：
+`app/plugin_gps`（GPS 接收机页）、`app/plugin_map`（Mapsforge 实时地图
++ 选图页）。核心固件自 rootfs 1.9.15 起不再内置任何地图/GPS 页面代码。
 
 要点：
 
@@ -45,12 +48,15 @@ int plugin_init(void)
     /* 1. 注册页面 */
     page_register(&my_page);
     /* 2. 注册抽屉条目：img 指向宿主图标（见下），icon 单字符仅作为
-     *    无图时的兜底字母（montserrat 渲染） */
+     *    无图时的兜底字母（montserrat 渲染）；info/data 是抽屉焦点
+     *    条目右侧的预览列（灰/白），data_get 每秒回调刷新白色列 */
     static const app_entry_t entry = {
         .name = "\xE6\x88\x91\xE7\x9A\x84\xE5\xBA\x94\xE7\x94\xA8",   /* 我的应用 */
         .icon = "A", .icon_color = 0x00C2FF,
         .page = &my_page,
         .img  = &app_icon_gps_img,   /* extern const lv_img_dsc_t */
+        .info = "State\nCount",
+        .data_get = my_drawer_data,  /* void cb(char *buf, int len) */
     };
     if (app_registry_add(&entry) < 0)
         return -1;
@@ -61,7 +67,8 @@ int plugin_init(void)
 - `plugin_abi_version` 必须等于宿主的 `PLUGIN_ABI_VERSION`。导出 API
   的结构体布局/函数签名变化时版本号 +1，旧插件会被明确拒载
   （日志 `ABI %u, host expects %u`），重新编译即可。
-  **当前 ABI = 2**：`app_entry_t` 增加了 `img`（图标图像）字段。
+  **当前 ABI = 3**：`app_entry_t` 增加了 `info`/`data`/`data_get`
+  （抽屉预览列，数据驱动）字段。
 - **抽屉图标**：宿主内置了一批 40x40 圆角图标（`App/Utils/app_icons.h`，
   `tools/gen_app_icons.py` 生成），通过 `app_*` 导出符号直接引用：
   `app_icon_trip_img`（行车）、`app_icon_gps_img`（GPS）、
@@ -139,18 +146,16 @@ SIM_DUMP_PPM=/tmp/stopwatch.ppm SDL_VIDEODRIVER=dummy ./build_sim/bin/pico_nav_s
 /* GPS 数据池 + 1s 采样需求（进页面要，出页面还） */
 #include "gps_service.h"          /* 经 -I<App/Utils> */
 const gps_data_t *g = app_gps();          /* app.h */
+int fresh = gps_service_is_fresh(g);      /* 新鲜度判定（含采样间隔自适应） */
 gps_service_demand_add();                 /* on_show */
 gps_service_demand_release();             /* on_hide */
 msg_center_subscribe(app_msg_center(), MSG_GPS, my_gps_cb, self);
 
-/* 地图：a) 内嵌地图控件（含完整 GPS HUD）  b) 直接用渲染引擎 */
-map_view_t *mv = map_view_create(parent, "/data/maps/city.map"); /* App/Utils/map_view.h */
-/* 控件自带方案A HUD：航向箭头/定位徽标/速度/比例尺/N/2xOK 重新跟随。
- * 喂数据即可：map_view_set_gps(mv, g)（NULL = 无新鲜定位，转搜索态）；
- * 1s 定时器轮询 app_gps() 并判断 gps_service_stale_ms() 即可。 */
-/* 系统地图页是首页轮播面板（page_livemap.c），不是可 open 的页面；
- * 选图页仍可按名打开：page_manager_open("mapselect", NULL) */
-#include "mf_map.h"  /* Mapsforge 引擎亦可 */
+/* 地图：整条地图栈（map_view 控件 + Mapsforge 引擎 + livemap/mapselect
+ * 页）随地图插件迁出（app/plugin_map），不再是宿主导出符号。需要地图
+ * 能力时安装地图插件并复用它的页面：page_manager_open("livemap", path)
+ * 或 page_manager_open("mapselect", NULL)（均由地图插件注册，未安装时
+ * page_find 返回 NULL，注意判空）。 */
 
 /* 配置（@ 前缀为易失键，仅存内存不落盘） */
 int v; config_get_int("myapp.threshold", &v, 10);   /* config_api.h */
@@ -185,6 +190,8 @@ page_t/page_ops_t 布局变化、app_entry_t 布局变化、任何导出函数�
 PLUGIN_SDK.md 与根 AGENTS.md 记录。
 
 历史：**1** 初始契约 → **2** `app_entry_t` 增加 `img` 图标字段
-（rootfs 1.9.12 / pkg 1.0.10）。ABI 1 的 .so 在新固件上会被拒载，
-重新编译上传即可；OTA 不会清除 `/data/apps`，旧 .so 会一直留在那里
-直到被同名上传覆盖。
+（rootfs 1.9.12 / pkg 1.0.10）→ **3** `app_entry_t` 增加
+`info`/`data`/`data_get` 抽屉预览列；GPS/地图功能拆出为独立插件仓库
+`app/plugin_gps`、`app/plugin_map`（rootfs 1.9.15 / pkg 1.0.13）。
+旧 ABI 的 .so 在新固件上会被拒载，重新编译上传即可；OTA 不会清除
+`/data/apps`，旧 .so 会一直留在那里直到被同名上传覆盖。

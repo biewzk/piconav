@@ -1,13 +1,8 @@
 #include "page_app_drawer.h"
 #include "app_registry.h"
-#include "../Utils/trip_store.h"
-#include "../Utils/config_api.h"
 #include "../Config/app_config.h"
-#include "../app.h"
 
 #include <stdbool.h>
-#include <stdio.h>
-#include <string.h>
 
 LV_FONT_DECLARE(lv_font_app_16);
 
@@ -20,6 +15,11 @@ LV_FONT_DECLARE(lv_font_app_16);
  * animates its icon box width 220 -> 70 (overshoot), revealing the
  * data column and an orange right-edge accent. Focus moves with
  * UP/DOWN and the list scrolls (LVGL scroll anim) to keep it centered.
+ *
+ * The list is fully registry-driven: entries come from pages_builtin
+ * (core apps) and plugin_init() (plugins), and each entry carries its
+ * own preview columns (app_entry_t info/data/data_get). The drawer
+ * only refreshes the data_get callbacks once a second while visible.
  *
  * Names are CJK (lv_font_app_16); info/data columns are ASCII, matching
  * the X-TRACK reference.
@@ -102,32 +102,26 @@ static void styles_init(void)
 
 /* ---------- live data columns ---------- */
 
+/*
+ * Poll every entry's data_get callback (about 1 Hz while visible).
+ * Entries without a callback keep their static data column; the
+ * callbacks themselves live with the entries (core: pages_builtin,
+ * plugins: plugin_init), so the drawer knows nothing about trip or
+ * GPS semantics.
+ */
 static void data_refresh(void)
 {
     char buf[64];
 
-    if (s_count < 2)
-        return;
+    for (int i = 0; i < s_count && i < MAX_ITEMS; i++) {
+        const app_entry_t *app = app_registry_get(i);
 
-    /* trip dialplate: session counters */
-    const trip_stats_t *trip = trip_store_get();
-    unsigned move_s = trip->move_ms / 1000;
-    snprintf(buf, sizeof(buf), "%.2fkm\n%02u:%02u",
-             trip->trip_km, move_s / 60, move_s % 60);
-    lv_label_set_text(s_data[0], buf);
-
-    /* GPS receiver: live position (dash it out without a fix) */
-    const gps_data_t *g = app_gps();
-    if (g->stamp_ms != 0 && g->fix) {
-        snprintf(buf, sizeof(buf), "%.4f\n%.4f\n%u %s",
-                 (double)g->lat, (double)g->lon,
-                 (unsigned)g->sats,
-                 g->fix_type == 3 ? "3D" :
-                 g->fix_type == 2 ? "2D" : "FIX");
-    } else {
-        snprintf(buf, sizeof(buf), "--\n--\n--");
+        if (!app || !app->data_get)
+            continue;
+        buf[0] = '\0';
+        app->data_get(buf, sizeof(buf));
+        lv_label_set_text(s_data[i], buf);
     }
-    lv_label_set_text(s_data[1], buf);
 }
 
 static void timer_cb(lv_timer_t *timer)
@@ -144,7 +138,7 @@ static void timer_cb(lv_timer_t *timer)
  * info / white data labels. The icon box stays the topmost child;
  * focusing shrinks it and uncovers the columns (X-TRACK's trick).
  */
-static void item_build(int i, const app_entry_t *app, const char *info)
+static void item_build(int i, const app_entry_t *app)
 {
     lv_obj_t *cont = lv_obj_create(s_root);
     lv_obj_remove_style_all(cont);
@@ -178,14 +172,15 @@ static void item_build(int i, const app_entry_t *app, const char *info)
     lv_obj_t *lbl = lv_label_create(icon);
     lv_label_set_text(lbl, app->name);
 
-    /* info + data columns (revealed on focus) */
+    /* info + data columns (revealed on focus; content comes from the
+     * entry itself) */
     lbl = lv_label_create(cont);
-    lv_label_set_text(lbl, info ? info : "");
+    lv_label_set_text(lbl, app->info ? app->info : "");
     lv_obj_add_style(lbl, &s_style_info, 0);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, INFO_X, 0);
 
     lbl = lv_label_create(cont);
-    lv_label_set_text(lbl, "-");
+    lv_label_set_text(lbl, app->data ? app->data : "-");
     lv_obj_add_style(lbl, &s_style_data, 0);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, DATA_X, 0);
     s_data[i] = lbl;
@@ -212,45 +207,13 @@ void app_drawer_create(lv_obj_t *parent)
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollbar_mode(s_root, LV_SCROLLBAR_MODE_OFF);
 
-    /* info columns of the built-ins (order = registry order); short
-     * words: our 16 px font is wider than the X-TRACK reference font.
-     * plugins get an empty column */
-    static const char *infos[] = {
-        "Trip\nMoving",             /* trip dialplate */
-        "Lat\nLon\nSats",
-        "Map",                      /* map (data = selected file) */
-        "Firmware\nTheme",          /* settings */
-        "OK\nDOWN",                 /* stopwatch */
-    };
-
     s_count = app_registry_count();
     for (int i = 0; i < s_count && i < MAX_ITEMS; i++)
-        item_build(i, app_registry_get(i),
-                   i < (int)(sizeof(infos) / sizeof(infos[0])) ?
-                   infos[i] : NULL);
+        item_build(i, app_registry_get(i));
 
     s_sel = 0;
     if (s_count > 0)
         lv_obj_add_state(s_icons[0], LV_STATE_FOCUSED);
-
-    /* static data columns for the non-live items */
-    if (s_count > 2) {
-        char sel[256], *dot;
-        const char *slash;
-
-        config_init();
-        config_get_str(APP_CFG_KEY_MAP_SELECTED, sel, sizeof(sel), "");
-        slash = strrchr(sel, '/');
-        dot = strrchr(slash ? slash : sel, '.');
-        if (dot)
-            *dot = '\0';
-        lv_label_set_text(s_data[2], slash ? slash + 1 :
-                          (sel[0] ? sel : "None"));
-    }
-    if (s_count > 3)
-        lv_label_set_text(s_data[3], "pico_nav\nDark");
-    if (s_count > 4)
-        lv_label_set_text(s_data[4], "Start/Stop\nReset");
 
     s_timer = lv_timer_create(timer_cb, 1000, NULL);
     data_refresh();

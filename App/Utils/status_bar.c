@@ -38,7 +38,7 @@ static void sb_refresh_gps(sb_priv_t *sb)
 
     /* Staleness follows the sampler interval (see gps_service.h): a 5 s
      * sampling profile must not read as "no data". */
-    if (g->stamp_ms != 0 && hal_tick_get() - g->stamp_ms <= gps_service_stale_ms()) {
+    if (gps_service_is_fresh(g)) {
         if (g->fix) {
             lit = 4;
             lit_col = COL_OK;

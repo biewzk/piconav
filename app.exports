@@ -3,7 +3,9 @@
  * script). Plugins dlopen()'ed from /data/apps resolve exactly these
  * symbols; everything else stays private to the executable. HAL is
  * deliberately NOT exported: it is the sim/device seam, plugins go
- * through the services (gps_service, config_api, map_view, ...).
+ * through the services (gps_service, config_api, status_bar, ...).
+ * The map stack (map_view, Mapsforge) lives in the map plugin since
+ * rootfs 1.9.15 and is no longer part of the host.
  */
 {
   global:
@@ -17,10 +19,7 @@
     gps_service_*;
     trip_store_*;
     sampler_*;
-    map_view_*;
     status_bar_*;
     log_*;
-    /* Mapsforge rendering engine */
-    mf_*;
   local: *;
 };

@@ -69,6 +69,11 @@ uint32_t gps_service_interval_ms(void);
  * a dead receiver. */
 uint32_t gps_service_stale_ms(void);
 
+/* 1 when the snapshot g is present and within the staleness window
+ * above. NULL-safe; the one freshness check for every consumer (core
+ * pages and plugins alike - HAL is not exported to plugins). */
+int gps_service_is_fresh(const gps_data_t *g);
+
 /* Refcounted fast demand (1 s samples): every visible consumer calls
  * demand_add() from on_show and demand_release() from on_hide. While
  * the count is positive the sampler runs at 1 s; at zero AUTO mode

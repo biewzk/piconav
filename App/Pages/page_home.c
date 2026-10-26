@@ -10,8 +10,9 @@
 
 /*
  * Home is a two-panel horizontal carousel: the watch face and the app
- * drawer. GPS receiver and map are ordinary drawer apps (page_gps /
- * page_livemap), pushed onto the page stack like any other page.
+ * drawer. The drawer lists the core apps (trip dialplate, settings)
+ * plus every plugin-registered entry (GPS receiver, live map, ...) -
+ * see pages_builtin.c and the plugin repos.
  */
 
 #define CAROUSEL_PANELS 2

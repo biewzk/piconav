@@ -30,14 +30,17 @@ extern "C" {
  * unloading. A failing one is dlclose()d and skipped, the host keeps
  * running. Build pages as page_t with static storage and register them
  * via page_register(); add drawer entries via app_registry_add() -
- * entries can point at the host's app_icon_* images for their icon.
+ * entries can point at the host's app_icon_* images for their icon and
+ * carry info/data preview columns for the drawer's rolling list.
  */
 
 /* Bump when the exported API surface changes shape (struct layout,
  * function signatures). Host and plugin must agree on this number.
  * History: 1 - initial contract; 2 - app_entry_t gained the img
- * field (drawer icon image, ABI 1 plugins are skipped until rebuilt). */
-#define PLUGIN_ABI_VERSION 2
+ * field (drawer icon image, ABI 1 plugins are skipped until rebuilt);
+ * 3 - app_entry_t gained the info/data/data_get preview columns
+ * (ABI 2 plugins are skipped until rebuilt). */
+#define PLUGIN_ABI_VERSION 3
 
 #ifdef __cplusplus
 }
