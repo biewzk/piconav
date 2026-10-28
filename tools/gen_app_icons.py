@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-Generate the app-drawer icons (LVGL 8.1, RGB565 + per-pixel alpha byte,
-LV_COLOR_16_SWAP 0).
+Generate the CORE built-in app icons (LVGL 8.1, RGB565 + per-pixel
+alpha byte, LV_COLOR_16_SWAP 0).
 
 Output: App/Utils/app_icons.c (const lv_img_dsc_t, 40x40 each)
   - app_icon_trip_img       speedometer gauge     (green tile)
-  - app_icon_gps_img        satellite             (blue tile)
-  - app_icon_map_img        folded map + pin      (orange tile)
   - app_icon_settings_img   gear                  (slate tile)
-  - app_icon_stopwatch_img  stopwatch             (yellow tile)
 
-Every icon is a rounded-corner tile in the app's accent color with a
-white glyph. Plugins reference these images by name (the host exports
-app_* symbols), so the stopwatch plugin carries no bitmap of its own.
-Re-run this script to change shapes or colors:
+Only apps that live IN the firmware keep compiled tiles here. Plugins
+own their icons: each plugin repo generates a 40x40 RGB565+A8 resource
+(assets/icon.rgb565a8) declared in its manifest.txt, and the host
+renders it (see plugin_manager.c / PLUGIN_SDK.md). The tile glyph
+rasterizer below is the reference for those per-plugin tools.
 
     python3 tools/gen_app_icons.py
 """
@@ -181,43 +179,6 @@ def glyph_trip():
     return add, (), ()
 
 
-def glyph_gps():
-    """Satellite: diamond body, two panels, mast up-right."""
-    d = (math.cos(math.radians(-45)), math.sin(math.radians(-45)))
-    p = (math.cos(math.radians(45)), math.sin(math.radians(45)))
-
-    def rect_at(c, hdir, hperp):
-        return [(c[0] + d[0] * hdir + p[0] * hperp,
-                 c[1] + d[1] * hdir + p[1] * hperp),
-                (c[0] + d[0] * hdir - p[0] * hperp,
-                 c[1] + d[1] * hdir - p[1] * hperp),
-                (c[0] - d[0] * hdir - p[0] * hperp,
-                 c[1] - d[1] * hdir - p[1] * hperp),
-                (c[0] - d[0] * hdir + p[0] * hperp,
-                 c[1] - d[1] * hdir + p[1] * hperp)]
-
-    body = [(d[0] * 4.6, d[1] * 4.6), (p[0] * 4.6, p[1] * 4.6),
-            (-d[0] * 4.6, -d[1] * 4.6), (-p[0] * 4.6, -p[1] * 4.6)]
-    add = [body,
-           rect_at((p[0] * 7.4, p[1] * 7.4), 1.9, 3.6),
-           rect_at((-p[0] * 7.4, -p[1] * 7.4), 1.9, 3.6),
-           rect_at((d[0] * 7.4, d[1] * 7.4), 1.6, 0.9),
-           circle(d[0] * 9.2, d[1] * 9.2, 1.1, 12)]
-    return add, (), ()
-
-
-def glyph_map():
-    """Trifold map with a punched-out location pin."""
-    b = [(-11, -6), (-3.7, -10), (3.7, -6), (11, -10),
-         (11, 10), (3.7, 6), (-3.7, 10), (-11, 6)]
-    add = [b]
-    cut = [rect_rot(-3.7, 0, 0.55, 10), rect_rot(3.7, 0, 0.55, 10),
-           circle(0, -2.8, 2.5, 20),
-           [(-2.4, -1.6), (2.4, -1.6), (0, 3.4)]]
-    readd = [circle(0, -2.8, 1.1, 12)]
-    return add, cut, readd
-
-
 def glyph_settings():
     """Gear: ring + 8 teeth, punched center hole."""
     add = [band(10.5, 6.6, 0, 360)]
@@ -229,22 +190,9 @@ def glyph_settings():
     return add, cut, ()
 
 
-def glyph_stopwatch():
-    """Stopwatch: ring, top button, stem, 12-o'clock hand, hub."""
-    add = [band(11, 8.1, 0, 360),
-           rect_rot(0, -12.6, 2.6, 1.6),
-           rect_rot(0, -9.9, 1.2, 1.2),
-           rect_rot(0, -4.4, 0.9, 3.7),
-           circle(0, 0, 1.8, 16)]
-    return add, (), ()
-
-
 ICONS = [
     ("app_icon_trip_img", (0x00, 0xA8, 0x60), glyph_trip, ()),
-    ("app_icon_gps_img", (0x00, 0x92, 0xD8), glyph_gps, ()),
-    ("app_icon_map_img", (0xE0, 0x80, 0x00), glyph_map, ()),
     ("app_icon_settings_img", (0x5E, 0x71, 0x88), glyph_settings, ()),
-    ("app_icon_stopwatch_img", (0xC0, 0xA0, 0x00), glyph_stopwatch, ()),
 ]
 
 
@@ -259,8 +207,8 @@ def main():
         f.write(" * Do not edit by hand: tweak the script and re-run it.\n")
         f.write(" *\n")
         f.write(" * 40x40 RGB565 + alpha byte per pixel (LV_COLOR_16_SWAP 0),\n")
-        f.write(" * rounded accent-color tile + white glyph, one per drawer\n")
-        f.write(" * app. Plugins reference these by name (app_* is exported).\n")
+        f.write(" * rounded accent-color tile + white glyph for the built-in\n")
+        f.write(" * apps. Plugins own their icon resources (manifest.txt).\n")
         f.write(" */\n\n")
         f.write('#include "app_icons.h"\n\n')
         for name, col, glyph, _ in ICONS:

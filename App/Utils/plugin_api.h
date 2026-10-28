@@ -34,13 +34,23 @@ extern "C" {
  * carry info/data preview columns for the drawer's rolling list.
  */
 
+/* Directory of the app package currently being initialized ("" for
+ * legacy bare .so plugins and outside plugin_init()). Packaged apps
+ * use it to locate their installed resources; copy it if needed later. */
+const char *app_plugin_dir(void);
+
 /* Bump when the exported API surface changes shape (struct layout,
- * function signatures). Host and plugin must agree on this number.
+ * function signatures) or when the host stops exporting symbols
+ * plugins used to rely on. Host and plugin must agree on this number.
  * History: 1 - initial contract; 2 - app_entry_t gained the img
  * field (drawer icon image, ABI 1 plugins are skipped until rebuilt);
  * 3 - app_entry_t gained the info/data/data_get preview columns
- * (ABI 2 plugins are skipped until rebuilt). */
-#define PLUGIN_ABI_VERSION 3
+ * (ABI 2 plugins are skipped until rebuilt); 4 - app packages (.app):
+ * the host no longer exports the app_icon_{gps,map,stopwatch}_img
+ * tiles (each app now ships its own icon resource declared in
+ * manifest.txt), added app_plugin_dir() for package resources, and the
+ * host builds drawer entries from the package manifest. */
+#define PLUGIN_ABI_VERSION 4
 
 #ifdef __cplusplus
 }

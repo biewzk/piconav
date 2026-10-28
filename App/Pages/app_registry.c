@@ -33,3 +33,23 @@ app_entry_t *app_registry_get(int index)
         return NULL;
     return &s_apps[index];
 }
+
+app_entry_t *app_registry_find(const char *name)
+{
+    if (!name)
+        return NULL;
+    for (int i = 0; i < s_count; i++)
+        if (strcmp(s_apps[i].name, name) == 0)
+            return &s_apps[i];
+    return NULL;
+}
+
+app_entry_t *app_registry_find_page(const page_t *page)
+{
+    if (!page)
+        return NULL;
+    for (int i = 0; i < s_count; i++)
+        if (s_apps[i].page == page)
+            return &s_apps[i];
+    return NULL;
+}

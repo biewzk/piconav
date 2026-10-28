@@ -1,0 +1,9 @@
+# Stopwatch example app. Drawer entry comes from the plugin; this
+# manifest supplies the icon resource for packaged installs.
+name=stopwatch
+label=Stopwatch
+version=1.2.0
+abi=4
+page=stopwatch
+exec=stopwatch.so
+icon=icon.rgb565a8

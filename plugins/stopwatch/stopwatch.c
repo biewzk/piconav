@@ -148,10 +148,6 @@ static page_t stopwatch_page = {
 
 /* ---- plugin contract ---- */
 
-/* Drawer icon from the host (app_icon_* symbols are exported; see
- * PLUGIN_SDK.md for the available icons). */
-extern const lv_img_dsc_t app_icon_stopwatch_img;
-
 const uint32_t plugin_abi_version = PLUGIN_ABI_VERSION;
 const char *plugin_name    = "stopwatch";
 const char *plugin_version = "1.2.0";
@@ -163,7 +159,7 @@ int plugin_init(void)
         .icon = "T",
         .icon_color = 0xFFD600,
         .page = &stopwatch_page,
-        .img  = &app_icon_stopwatch_img,
+        .img  = NULL,   /* icon: manifest resource */
         .info = "OK\nDOWN",
         .data = "Start/Stop\nReset",
     };

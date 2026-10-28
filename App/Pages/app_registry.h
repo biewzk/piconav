@@ -37,4 +37,9 @@ int app_registry_add(const app_entry_t *entry);
 int          app_registry_count(void);
 app_entry_t *app_registry_get(int index);
 
+/* Lookup helpers (NULL when absent). Used by the plugin manager to
+ * fill in drawer presentation from an app package manifest. */
+app_entry_t *app_registry_find(const char *name);
+app_entry_t *app_registry_find_page(const page_t *page);
+
 #endif /* APP_REGISTRY_H */

@@ -24,7 +24,23 @@ all: build/stopwatch.so
 build/stopwatch.so: stopwatch.c $(ROOT)/App/Utils/plugin_api.h
 	@mkdir -p $(dir $@)
 	$(CROSS_COMPILE)gcc -O2 -g0 $(CFLAGS_COMMON) -o $@ stopwatch.c
-	@echo "built $@ (device, upload to /data/apps/)"
+	@echo "built $@ (device, legacy bare .so)"
+
+# App package: manifest + code + icon resource, installed by webctl
+# (PUT /api/upload?mode=app) or the web UI into /data/apps/stopwatch/.
+APP_VER := $(shell sed -n 's/^version=//p' manifest.txt)
+APP_BIN := build/stopwatch-$(APP_VER).app
+
+app: $(APP_BIN)
+
+$(APP_BIN): stopwatch.c $(ROOT)/App/Utils/plugin_api.h manifest.txt \
+            assets/icon.rgb565a8 $(ROOT)/tools/pack_app.py
+	@mkdir -p build/app
+	cp manifest.txt build/app/manifest.txt
+	cp assets/icon.rgb565a8 build/app/icon.rgb565a8
+	$(CROSS_COMPILE)gcc -O2 -g0 $(CFLAGS_COMMON) -o build/app/stopwatch.so stopwatch.c
+	python3 $(ROOT)/tools/pack_app.py build/app -o $@
+	@echo "built $@ (device package, install via webctl mode=app)"
 
 build_sim/stopwatch.so: stopwatch.c $(ROOT)/App/Utils/plugin_api.h
 	@mkdir -p $(dir $@)
@@ -36,4 +52,4 @@ sim: build_sim/stopwatch.so
 clean:
 	rm -rf build build_sim
 
-.PHONY: all sim clean
+.PHONY: all app sim clean

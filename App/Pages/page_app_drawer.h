@@ -16,4 +16,9 @@ void app_drawer_set_sel(int sel);
 /* Get the current selection index. */
 int app_drawer_get_sel(void);
 
+/* Rebuild the item list from the app registry (used after a hot app
+ * install). No-op when the drawer has not been built yet. Keeps the
+ * selection index clamped; refreshes the data columns. */
+void app_drawer_refresh(void);
+
 #endif /* PAGE_APP_DRAWER_H */

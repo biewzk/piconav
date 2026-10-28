@@ -1,8 +1,9 @@
 # pico_nav 插件开发手册 (PLUGIN_SDK)
 
-pico_nav 的 GUI 支持把"应用"做成可安装的插件：一个 `.so` 文件放进设备的
-`/data/apps/` 目录，重启 GUI 后自动加载并出现在应用抽屉里。插件与内置
-页面使用完全相同的 API（LVGL + 服务层），无需重烧固件。
+pico_nav 的 GUI 支持把"应用"做成**可安装的应用包**：一个 `.app` 文件
+（清单 + 代码 + 资源）通过 webctl 装入设备的 `/data/apps/<name>/`，
+**约 1 秒内自动出现在应用抽屉里，无需重启 GUI**。插件与内置页面使用
+完全相同的 API（LVGL + 服务层），无需重烧固件。
 
 ## 1. 架构一览
 
@@ -11,187 +12,211 @@ demo (宿主, /usr/bin/demo, 核心=系统UI: 表盘+抽屉+设置)
  ├─ 导出白名单 (app.exports): lv_* / app_* / msg_* / page_* / config_*
  │   / gps_service_* / trip_store_* / sampler_* / status_bar_* / log_*
  ├─ page_manager: page_register() 注册页面, page_manager_open() 按名导航
- ├─ app_registry: app_registry_add() 注册抽屉条目
- ├─ plugin_manager: 启动时扫描 /data/apps/*.so → dlopen → ABI 校验
- │   → plugin_init()
- └─ /data/apps/*.so        ← webctl 上传安装（/data 不参与 A/B，OTA 不清）
+ ├─ app_registry: 抽屉条目运行时列表
+ ├─ plugin_manager: 扫描 /data/apps
+ │    ├─ <name>/manifest.txt + app.so + 资源   ← 应用包(.app 安装)
+ │    └─ *.so                                 ← 旧式裸插件(兼容)
+ │  1 Hz 监听目录变化 → 热加载新应用 → 抽屉自动重建
+ └─ /data/apps/...        ← webctl 上传安装（/data 不参与 A/B，OTA 不清）
 ```
 
-官方插件（独立 git 仓库，同目录安装方式）：
+官方插件（独立 git 仓库）：
 `app/plugin_gps`（GPS 接收机页）、`app/plugin_map`（Mapsforge 实时地图
-+ 选图页）。核心固件自 rootfs 1.9.15 起不再内置任何地图/GPS 页面代码。
++ 选图页）、`app/plugin_flora`（LA 植物图鉴, 离线数据）。树内示例：
+`app/pico_nav/plugins/stopwatch`。
 
 要点：
 
-- **插件 = 静态链接进宿主的普通模块**，只是放在独立 .so 里。页面对象
-  用 `static` 存储，`plugin_init()` 里注册；页面构建仍是懒加载（推入
-  页面栈时才 create，弹出即销毁）。
-- **插件成功加载后终身驻留**：不会 dlclos，页面栈里可能还有它的页面。
-  只有 init 失败/ABI 不符才会被卸载跳过。
+- **图标归应用所有**：每个应用包自带 `icon.rgb565a8`（40×40
+  RGB565+A8 固定格式）并在 `manifest.txt` 声明；宿主只按固定格式解析
+  并渲染，不再维护应用图标库。内置 app（行车/设置）的图标仍在固件内。
+- **抽屉条目由清单驱动**（`label`/`info`/`data`/`icon`）；需要实时
+  预览列的 app 仍可在 `plugin_init()` 里 `app_registry_add()` 注册
+  自己的条目（宿主会为同一页面补上清单里的图标）。
+- **插件成功加载后终身驻留**：不会 dlclose。热安装只增不减；删除应用
+  需要重启 GUI 才会消失。
 - **任何插件问题都不会拖垮宿主**：dlopen 失败、缺导出符号、ABI 不匹配、
   init 返回非 0 都只产生一条 WARN 日志后跳过。但插件页面运行期崩溃
   仍然等于整个 GUI 崩溃（无隔离，S99demo 会自动拉起）。
 
-## 2. 插件契约
+## 2. 应用包格式 (.app)
 
-插件 .so 必须导出以下符号（见 `App/Utils/plugin_api.h`）：
+单文件、小端，由 `app/pico_nav/tools/pack_app.py` 生成：
+
+```
+off  size  field
+0    8     magic "PICOAPP1"
+8    4     u32 manifest_len
+12   4     u32 file_count
+16   4     u32 index_off          (绝对偏移)
+20   ...   manifest 文本 (key=value)
+     ...   index: file_count × { u16 name_len, name, u32 off, u32 size }
+     ...   文件数据 (绝对偏移)
+```
+
+清单键（固定格式；宿主与 webctl 都按此解析）：
+
+| 键 | 说明 |
+|----|------|
+| `name` | 必需。唯一 id，`[a-z0-9_-]`，安装目录名 |
+| `abi` | 必需。插件 ABI，必须等于固件的 `PLUGIN_ABI_VERSION` |
+| `label` | 抽屉显示名 |
+| `version` | 版本字符串 |
+| `page` | 插件注册的页面名（宿主据此把条目和页面关联） |
+| `exec` | .so 文件名，默认 `app.so` |
+| `icon` | 图标资源文件名（40×40 RGB565+A8 = 4800 字节） |
+| `info` | 抽屉灰色列，`\n` 表示换行 |
+| `data` | 抽屉白色列（静态文本） |
+
+安装 = 整包解压到 `/data/apps/<name>/`（与打包目录 1:1）；宿主 1 Hz
+监听目录 mtime，发现新应用后 dlopen + `plugin_init()` + 抽屉重建。
+
+## 3. 插件契约
+
+`.so` 必须导出（见 `App/Utils/plugin_api.h`，**当前 ABI = 4**）：
 
 ```c
-#include "plugin_api.h"   /* App/Utils/plugin_api.h */
-
 const uint32_t plugin_abi_version = PLUGIN_ABI_VERSION;
 const char *plugin_name    = "myapp";     /* 全局唯一 */
 const char *plugin_version = "1.0.0";
+int plugin_init(void);                    /* 注册页面, 0=成功 */
+```
 
+```c
 int plugin_init(void)
 {
-    /* 1. 注册页面 */
-    page_register(&my_page);
-    /* 2. 注册抽屉条目：img 指向宿主图标（见下），icon 单字符仅作为
-     *    无图时的兜底字母（montserrat 渲染）；info/data 是抽屉焦点
-     *    条目右侧的预览列（灰/白），data_get 每秒回调刷新白色列 */
+    page_register(&my_page);          /* 页面注册(必需) */
+
+    /* 可选：需要动态预览列时自己注册条目；图标仍由清单提供 */
     static const app_entry_t entry = {
-        .name = "\xE6\x88\x91\xE7\x9A\x84\xE5\xBA\x94\xE7\x94\xA8",   /* 我的应用 */
-        .icon = "A", .icon_color = 0x00C2FF,
+        .name = "My App", .icon = "M", .icon_color = 0x00C2FF,
         .page = &my_page,
-        .img  = &app_icon_gps_img,   /* extern const lv_img_dsc_t */
         .info = "State\nCount",
-        .data_get = my_drawer_data,  /* void cb(char *buf, int len) */
+        .data_get = my_drawer_data,   /* void cb(char *buf, int len) */
     };
-    if (app_registry_add(&entry) < 0)
-        return -1;
+    app_registry_add(&entry);
     return 0;
 }
 ```
 
-- `plugin_abi_version` 必须等于宿主的 `PLUGIN_ABI_VERSION`。导出 API
-  的结构体布局/函数签名变化时版本号 +1，旧插件会被明确拒载
-  （日志 `ABI %u, host expects %u`），重新编译即可。
-  **当前 ABI = 3**：`app_entry_t` 增加了 `info`/`data`/`data_get`
-  （抽屉预览列，数据驱动）字段。
-- **抽屉图标**：宿主内置了一批 40x40 圆角图标（`App/Utils/app_icons.h`，
-  `tools/gen_app_icons.py` 生成），通过 `app_*` 导出符号直接引用：
-  `app_icon_trip_img`（行车）、`app_icon_gps_img`（GPS）、
-  `app_icon_map_img`（地图）、`app_icon_settings_img`（设置）、
-  `app_icon_stopwatch_img`（秒表）。声明
-  `extern const lv_img_dsc_t app_icon_xxx_img;` 后赋给 `entry.img`；
-  置 NULL 时抽屉回退显示 `icon` 字母。注意宿主固件删改图标名会使
-  插件 dlopen 失败（仅跳过该插件，宿主不受影响）。
-- `plugin_init()` 在 dlopen 后立即调用一次；失败返回非 0。
-- 页面生命周期与内置页面完全一致：`create/destroy/on_show/on_hide/
-  on_key`（`page_manager.h`）。长按 ENTER=返回是 page_manager 的默认
-  行为，页面自己要用长按 ENTER（如地图缩放）时设
-  `PAGE_FLAG_NO_AUTO_BACK`。
+- **资源定位**：`const char *app_plugin_dir(void)` 在 `plugin_init()`
+  期间返回本应用包目录（旧式裸 .so 为空串）。资源都放在该目录下，
+  例如 `snprintf(p, n, "%s/data.bin", app_plugin_dir())`；需要后续
+  访问就把路径拷贝走。
+- 页面生命周期与内置页面一致：`create/destroy/on_show/on_hide/on_key`
+  （`page_manager.h`）。长按 ENTER=返回是 page_manager 的默认行为，
+  页面自己要用长按 ENTER（如地图缩放）时设 `PAGE_FLAG_NO_AUTO_BACK`。
 - 页面参数：`page_manager_open(name, param)` 的 `param` 指针在
-  `create()` 内有效（随后被清除），需要在 create 里拷贝进私有数据。
-- **UI 字符串注意**：内置 Montserrat 无 CJK 字形，中文标签不会显示。
-  抽屉条目名请使用宿主的 `lv_font_app_16`（ASCII + 现有 UI 用到的
-  汉字子集；**不在子集内的汉字同样不显示**）或自带字体；UTF-8 转义
-  字节写法参考秒表插件。
+  `create()` 内有效（随后被清除），需要在 create 里拷贝。
+- **UI 字符串**：内置 Montserrat 无 CJK 字形；抽屉条目的 CJK 名称可以
+  写在清单里（UTF-8，宿主用 `lv_font_app_16` 渲染），但**清单里的
+  汉字必须在宿主字体子集内**，否则不显示。
 
-## 3. 编译
+## 4. 图标资源（应用自维护）
 
-`plugins/stopwatch/Makefile` 是模板，核心就一条链接规则——**不链接
-任何库**，所有符号由宿主在 dlopen 时解析：
+40×40、RGB565 小端 + 每像素 1 字节 alpha（`LV_IMG_CF_TRUE_COLOR_ALPHA`，
+`LV_COLOR_16_SWAP 0`），共 4800 字节，声明在 `manifest.txt` 的
+`icon=`。设备端由宿主读入内存直接渲染，无需插件代码参与。
 
-```make
-arm-buildroot-linux-gnueabihf-gcc -O2 -g0 -fPIC -shared \
-    -std=c99 -DLV_CONF_INCLUDE_SIMPLE \
-    -I<repo根> -I<repo根>/lvgl -I<repo根>/App/Utils -I<repo根>/App/Pages \
-    -o stopwatch.so stopwatch.c
+生成：各仓库 `tools/gen_icon.py`（从 pico_nav 的 app 图标栅格化器裁剪，
+只保留本应用的 glyph），输出 `assets/icon.rgb565a8`：
+
+```sh
+python3 tools/gen_icon.py     # 改形状/配色后重跑(产物已提交)
 ```
+
+## 5. 编译与打包
+
+```sh
+./build.sh          # ARM .so + .app 包 (build/<name>-<ver>.app)
+./build.sh host     # 宿主版 .so(模拟器用)
+./build.sh clean
+```
+
+`make` 仍然只产 `.so`；`make app` 额外把清单 + `.so` + `assets/` +
+其他资源打成 `.app`（调用 `pico_nav/tools/pack_app.py`，会校验 ARM ELF、
+图标尺寸、清单字段）。
 
 - 工具链必须与固件一致：buildroot glibc 交叉工具链
   （`buildroot/buildroot-2023.02.6/output/host/bin/`），uClibc 工具链
-  编出的 .so 加载即崩（C 库不匹配，与 app 侧规矩相同）。
-- `make sim` 产出宿主版 .so，供 SDL 模拟器加载（逻辑/布局验证，不能
-  交叉部署）。
-- 仓库内编译：`cd app/pico_nav/plugins/stopwatch && make`（设备）/
-  `make sim`（宿主）。
+  编出的 .so 加载即崩。
+- 插件不链接任何库；LVGL/框架符号在 dlopen 时由宿主解析
+  （`app/pico_nav/app.exports`）。
 
-## 4. 部署与调试
+## 6. 部署与调试
 
 ```sh
-# 方式一：webctl 上传（推荐）—— 浏览器打开 http://<设备IP>/
-#   插件卡片 → 选择 .so → 上传（自动 ELF/ARM 校验，落到 /data/apps/）
-#   → 点"重启应用"（或 S99demo restart）
+# 方式一：webctl 网页（推荐）—— http://<设备IP>/ → 插件/应用管理 →
+#   选择 .app → "安装应用包"。约 1 秒后抽屉自动出现，无需重启。
 
-# 方式二：scp（调试期）
-scp -O -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no \
-    build/stopwatch.so root@<设备IP>:/data/apps/
-ssh root@<设备IP> S99demo restart   # 或杀掉 demo, 监督循环会拉起
+# 方式二：HTTP API
+curl -X PUT --data-binary @flora.app \
+     'http://<设备IP>/api/upload?mode=app'
 
-# 看加载日志
-ssh root@<设备IP> grep plugin /tmp/demo.log
+# 方式三：scp（调试期，需手工解包成目录）
+scp -O build/flora-1.0.0.app root@<设备IP>:/tmp/
+# （推荐直接走方式一/二，省去手工解包）
 ```
 
-模拟器（宿主插件）：
+旧式裸 `.so` 仍可 `mode=plugin` 上传到 `/data/apps/`（无清单/资源，
+图标回退字母），同样约 1 秒后加载。
 
 ```sh
-cd app/pico_nav/sim
-PICO_NAV_APPS=../plugins/stopwatch/build_sim ./build_sim/bin/pico_nav_sim
-# 无头回归:
-PICO_NAV_APPS=... SIM_AUTOQUIT_MS=11000 \
-SIM_KEY="right,down,down,down,enter,enter,enter" SIM_KEY_MS=900 \
-SIM_DUMP_PPM=/tmp/stopwatch.ppm SDL_VIDEODRIVER=dummy ./build_sim/bin/pico_nav_sim
+ssh root@<设备IP> grep -E 'plugin|flora' /tmp/demo.log
 ```
 
-环境变量：`PICO_NAV_APPS` 覆盖插件目录（默认 `/data/apps`）。
+模拟器（宿主）：
 
-## 5. 服务消费示例
+```sh
+make sim
+cd ../pico_nav/sim
+PICO_NAV_APPS=../../plugin_flora/build_sim ./build_sim/bin/pico_nav_sim
+# 无头回归: SIM_AUTOQUIT_MS / SIM_KEY / SIM_KEY_MS / SIM_DUMP_PPM
+```
 
-插件与内置页面同一套服务，"要轮子直接拿"：
+模拟器也可以直接加载**包目录布局**：把 `manifest.txt + app.so(宿主版)
++ 资源` 放进一个目录，`PICO_NAV_APPS=<父目录>` 即可；运行中把目录
+拷进去就能验证热安装。
+
+## 7. 服务消费示例
 
 ```c
-/* GPS 数据池 + 1s 采样需求（进页面要，出页面还） */
-#include "gps_service.h"          /* 经 -I<App/Utils> */
-const gps_data_t *g = app_gps();          /* app.h */
-int fresh = gps_service_is_fresh(g);      /* 新鲜度判定（含采样间隔自适应） */
+#include "gps_service.h"
+const gps_data_t *g = app_gps();
+int fresh = gps_service_is_fresh(g);
 gps_service_demand_add();                 /* on_show */
 gps_service_demand_release();             /* on_hide */
 msg_center_subscribe(app_msg_center(), MSG_GPS, my_gps_cb, self);
 
-/* 地图：整条地图栈（map_view 控件 + Mapsforge 引擎 + livemap/mapselect
- * 页）随地图插件迁出（app/plugin_map），不再是宿主导出符号。需要地图
- * 能力时安装地图插件并复用它的页面：page_manager_open("livemap", path)
- * 或 page_manager_open("mapselect", NULL)（均由地图插件注册，未安装时
- * page_find 返回 NULL，注意判空）。 */
-
-/* 配置（@ 前缀为易失键，仅存内存不落盘） */
 int v; config_get_int("myapp.threshold", &v, 10);   /* config_api.h */
 config_set_int("myapp.threshold", v + 1);
-config_save();                                      /* 显式 commit 落盘 */
+config_save();
 
-/* 周期任务（与 GPS 采样同一组件） */
 sampler_t *s = sampler_create(1000, 5000, my_poll, my_publish, user);
-
-/* 运行时消息主题（插件私有话题） */
-msg_topic_t t = msg_topic_register(app_msg_center(), "myapp.alert");
 ```
 
-**边界**：HAL 层（`hal_*.h` 的函数）不导出——那是 sim/真机差异的接缝，
-插件走服务层；直接读 GPIO/UART 这类需求应作为服务进主线。
+**边界**：HAL 层不导出——插件走服务层；直接读 GPIO/UART 的需求应
+作为服务进主线。
 
-## 6. 限制
+## 8. 限制
 
-- 无进程隔离：插件运行期崩溃 = GUI 重启（监督循环兜底，2 s 拉起）。
-- ABI 与固件绑定：rootfs 升级（尤其 LVGL/头文件变化）后插件需重编译；
-  不匹配会被拒载而不是崩溃。
-- RAM 预算 64 MB：插件页面懒构建，但 .so 文本段常驻页缓存；单插件
-  控制在 ~100 KB 量级，避免全屏大缓冲（地图控件已做按需分配）。
-- webctl 无鉴权（受信 LAN 姿态），插件上传接口做了 ELF magic/架构/
-  大小校验，但不要把 80 端口暴露到公网。
+- 无进程隔离：插件运行期崩溃 = GUI 重启（S99demo 2 s 拉起）。
+- ABI 与固件绑定：rootfs 升级后插件需重编译；不匹配会被明确拒载。
+- 热安装只增不减：删除 /data/apps/<name>/ 后需重启 GUI 才消失；
+  同名升级也要重启（dlopen 不会重新执行已驻留的 .so）。
+- RAM 预算 64 MB：应用包目录常驻页缓存；资源由 app 自行管理。
+- webctl 无鉴权（受信 LAN 姿态），安装接口做了 magic/名称/ARM ELF/
+  大小/路径校验，但不要把 80 端口暴露到公网。
 
-## 7. 版本策略
+## 9. 版本策略
 
-`PLUGIN_ABI_VERSION`（plugin_api.h）在以下情况 +1：
-page_t/page_ops_t 布局变化、app_entry_t 布局变化、任何导出函数签名
-变化。仅新增导出函数/新页面名不破坏 ABI，可不变。固件侧同步在
-PLUGIN_SDK.md 与根 AGENTS.md 记录。
+`PLUGIN_ABI_VERSION`（plugin_api.h）在以下情况 +1：`page_t`/
+`page_ops_t`/`app_entry_t` 布局变化、导出函数签名变化、**导出符号集合
+收缩**。仅新增导出函数/新页面名不破坏 ABI。
 
-历史：**1** 初始契约 → **2** `app_entry_t` 增加 `img` 图标字段
-（rootfs 1.9.12 / pkg 1.0.10）→ **3** `app_entry_t` 增加
-`info`/`data`/`data_get` 抽屉预览列；GPS/地图功能拆出为独立插件仓库
-`app/plugin_gps`、`app/plugin_map`（rootfs 1.9.15 / pkg 1.0.13）。
-旧 ABI 的 .so 在新固件上会被拒载，重新编译上传即可；OTA 不会清除
-`/data/apps`，旧 .so 会一直留在那里直到被同名上传覆盖。
+历史：**1** 初始契约 → **2** `app_entry_t` 增加 `img` → **3**
+`app_entry_t` 增加 `info`/`data`/`data_get`；GPS/地图拆出独立仓库 →
+**4** 应用包（`.app`）：宿主不再导出 `app_icon_{gps,map,stopwatch}_img`
+（图标改由各应用的 `icon.rgb565a8` 资源提供），新增
+`app_plugin_dir()`，抽屉条目可由 manifest 构建，支持热安装。
+ABI 3 及更早的 .so 在 ABI 4 固件上会被拒载，需重新打包安装。

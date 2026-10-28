@@ -3,6 +3,7 @@
 #include "../Config/app_config.h"
 
 #include <stdbool.h>
+#include <string.h>
 
 LV_FONT_DECLARE(lv_font_app_16);
 
@@ -208,7 +209,9 @@ void app_drawer_create(lv_obj_t *parent)
     lv_obj_set_scrollbar_mode(s_root, LV_SCROLLBAR_MODE_OFF);
 
     s_count = app_registry_count();
-    for (int i = 0; i < s_count && i < MAX_ITEMS; i++)
+    if (s_count > MAX_ITEMS)
+        s_count = MAX_ITEMS;
+    for (int i = 0; i < s_count; i++)
         item_build(i, app_registry_get(i));
 
     s_sel = 0;
@@ -258,4 +261,39 @@ void app_drawer_set_visible(int on)
                            LV_ANIM_OFF);
         data_refresh();
     }
+}
+
+/* ---------- hot install ---------- */
+
+/*
+ * Rebuild the item list after the plugin manager hot-loaded new apps.
+ * The registry is append-only, so existing items could be kept, but a
+ * full rebuild is simpler and guarantees fresh pointers (item widgets
+ * cache s_data labels for the 1 Hz refresh). No-op before the drawer
+ * exists (the create path builds everything from the registry).
+ */
+void app_drawer_refresh(void)
+{
+    if (!s_root)
+        return;
+
+    lv_obj_clean(s_root);
+    memset(s_items, 0, sizeof s_items);
+    memset(s_icons, 0, sizeof s_icons);
+    memset(s_data, 0, sizeof s_data);
+
+    s_count = app_registry_count();
+    if (s_count > MAX_ITEMS)
+        s_count = MAX_ITEMS;
+    for (int i = 0; i < s_count; i++)
+        item_build(i, app_registry_get(i));
+
+    if (s_sel >= s_count)
+        s_sel = s_count > 0 ? s_count - 1 : 0;
+    if (s_count > 0) {
+        lv_obj_add_state(s_icons[s_sel], LV_STATE_FOCUSED);
+        lv_obj_scroll_to_y(s_root, lv_obj_get_y(s_items[s_sel]),
+                           LV_ANIM_OFF);
+    }
+    data_refresh();
 }
