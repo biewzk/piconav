@@ -112,7 +112,7 @@ dlopen + `plugin_init()`。
 - **硬件交接**：同一时刻只有一个进程使用屏幕/按键/串口。宿主在 exec 前
   释放（`hal_key_shutdown` / `hal_gps_suspend`），子进程退出后重新获取。
 - **退出**：根页面上长按 ENTER 退出；页面自己占用长按 ENTER（如地图
-  缩放的 `PAGE_FLAG_NO_AUTO_BACK`）时，**持续按住 ENTER 5 秒**由运行
+  缩放的 `PAGE_FLAG_NO_AUTO_BACK`）时，**持续按住 ENTER 4 秒**由运行
   时强制退出（保险丝）。
 - **崩溃隔离**：应用段错误只结束它自己，宿主立即回到抽屉。
 

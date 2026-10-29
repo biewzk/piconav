@@ -18,8 +18,9 @@
 
 #define SELF_DIR_MAX 256
 /* Safety net: a page may own long ENTER (the map zooms out with it), so
- * holding ENTER this long on the root page always leaves the app. */
-#define FORCE_QUIT_HOLD_MS 5000
+ * holding ENTER this long on the root page always leaves the app. Kept
+ * below 5 s so the webctl key injector (hold cap 5 s) can test it. */
+#define FORCE_QUIT_HOLD_MS 4000
 
 static char s_self_dir[SELF_DIR_MAX];
 static int  s_quit;
