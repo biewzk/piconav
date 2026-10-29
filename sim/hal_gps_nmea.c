@@ -98,3 +98,7 @@ int hal_gps_read(gps_data_t *out)
     *out = s_parser.data;
     return 1;
 }
+
+/* Simulator: the NMEA replay is process-local, nothing to release. */
+void hal_gps_suspend(void) {}
+void hal_gps_resume(void) {}

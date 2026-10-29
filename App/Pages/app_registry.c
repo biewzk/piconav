@@ -10,7 +10,7 @@ static int s_count;
 
 int app_registry_add(const app_entry_t *entry)
 {
-    if (!entry || !entry->name || !entry->page)
+    if (!entry || !entry->name || (!entry->page && !entry->exec))
         return -1;
     for (int i = 0; i < s_count; i++)
         if (strcmp(s_apps[i].name, entry->name) == 0)

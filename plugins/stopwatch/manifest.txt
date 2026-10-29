@@ -3,7 +3,7 @@
 name=stopwatch
 label=Stopwatch
 version=1.2.0
-abi=4
+abi=6
 page=stopwatch
 exec=stopwatch.so
 icon=icon.rgb565a8

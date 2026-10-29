@@ -65,6 +65,12 @@ page_t *page_manager_top(void);
 /* Stack depth */
 int page_manager_depth(void);
 
+/* Root-pop hook: called when the back gesture (long ENTER) is used on
+ * the first page of the stack. The launcher GUI ignores it (there is
+ * nothing below home); a standalone app installs a callback that ends
+ * its main loop, so long ENTER at the root returns to the launcher. */
+void page_manager_set_root_pop_cb(void (*cb)(void));
+
 #ifdef __cplusplus
 }
 #endif

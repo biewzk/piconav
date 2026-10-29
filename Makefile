@@ -6,6 +6,7 @@
 BUILDROOT_TOOLCHAIN ?= $(HOME)/code/odometer/buildroot/buildroot-2023.02.6/output/host/bin
 CROSS_COMPILE      ?= $(BUILDROOT_TOOLCHAIN)/arm-buildroot-linux-gnueabihf-
 CC                 = $(CROSS_COMPILE)gcc
+AR                 = $(CROSS_COMPILE)ar
 
 # keep 'all' as the default goal: the -include'd .d dep files below
 # contain real rules which would otherwise hijack the first-target slot
@@ -27,6 +28,8 @@ BIN             = demo
 BUILD_DIR       = ./build
 BUILD_OBJ_DIR   = $(BUILD_DIR)/obj
 BUILD_BIN_DIR   = $(BUILD_DIR)/bin
+LIB_DIR         = $(BUILD_DIR)/lib
+LIB             = $(LIB_DIR)/libpiconav.a
 
 prefix          ?= /usr
 bindir          ?= $(prefix)/bin
@@ -68,6 +71,27 @@ $(BUILD_OBJ_DIR)/%.o: %.c
 	@$(CC)  $(CFLAGS) -c $< -o $@
 	@echo "CC $<"
     
+# Static runtime archive linked by standalone app executables (kind=exe
+# packages). It carries LVGL, lv_drivers, the HAL, the services and the
+# page manager - everything an app needs - but not the launcher UI
+# (main.c, App/app.c, App/Pages, plugin_manager).
+LIB_SRCS := $(filter-out App/Utils/plugin_manager.c, $(wildcard App/Utils/*.c)) \
+            $(wildcard App/Pages/app_registry.c) \
+            $(wildcard App/Pages/status_bar.c) \
+            $(wildcard App/Config/*.c) \
+            $(wildcard App/runtime/*.c) \
+            $(wildcard HAL/*.c) \
+            $(wildcard third_party/cJSON/*.c)
+LIB_OBJS := $(addprefix $(BUILD_OBJ_DIR)/, $(LIB_SRCS:.c=.o)) $(COBJS)
+
+lib: $(LIB)
+
+$(LIB): $(LIB_OBJS)
+	@mkdir -p $(dir $@)
+	rm -f $@
+	$(AR) rcs $@ $(LIB_OBJS)
+	@echo "AR $@"
+
 default: $(TARGET)
 	@mkdir -p $(dir $(BUILD_BIN_DIR)/)
 	$(CC) -o $(BUILD_BIN_DIR)/$(BIN) $(TARGET) $(LDFLAGS) \

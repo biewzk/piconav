@@ -23,6 +23,8 @@ fi
 
 echo ">>> make"
 make
+echo ">>> make lib (standalone app runtime)"
+make lib
 
 BIN="$DIR/build/bin/demo"
 if [ -f "$BIN" ]; then

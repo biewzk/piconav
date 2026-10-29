@@ -20,6 +20,7 @@ static int s_depth;
 static msg_sub_t *s_key_sub;
 static lv_obj_t *s_master;
 static bool s_switch_busy;   /* a push/pop/replace transition is running */
+static void (*s_root_pop_cb)(void);   /* back on the first page */
 
 #define SWITCH_ANIM_TIME PAGE_ANIM_TIME   /* X-TRACK default: 500 ms */
 
@@ -331,8 +332,13 @@ void page_manager_replace(page_t *page)
  */
 void page_manager_pop(void)
 {
-    if (s_depth <= 1)
+    if (s_depth <= 1) {
+        /* Long ENTER on the root page: no page below to reveal. The
+         * launcher ignores this; a standalone app ends its loop. */
+        if (s_root_pop_cb)
+            s_root_pop_cb();
         return;
+    }
     if (s_switch_busy) {
         LOG_W("pop rejected: switch in progress");
         return;
@@ -385,6 +391,11 @@ page_t *page_manager_open(const char *name, const char *param)
 page_t *page_manager_top(void)
 {
     return s_depth > 0 ? s_stack[s_depth - 1] : NULL;
+}
+
+void page_manager_set_root_pop_cb(void (*cb)(void))
+{
+    s_root_pop_cb = cb;
 }
 
 /* Return the current page stack depth. */

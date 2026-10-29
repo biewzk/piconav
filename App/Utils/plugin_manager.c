@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #define PLUGIN_LOAD_MAX  32
 #define PLUGIN_PATH_SZ   512
@@ -32,21 +33,26 @@ typedef struct {
     char icon[64];      /* 40x40 RGB565+A8 icon file                   */
     char info[128];     /* grey drawer column                          */
     char data[128];     /* white drawer column                         */
+    char preview[64];   /* drawer white column file (kind=exe)          */
+    char kind[8];       /* "plugin" (in-process .so) or "exe"          */
     int  abi;           /* -1 when absent                              */
 } Manifest;
 
 typedef struct {
     char     path[PLUGIN_PATH_SZ];   /* dedup key (artifact/dir path)  */
     char     dir[PLUGIN_PATH_SZ];    /* "" for legacy bare .so         */
+    char     exec[PLUGIN_PATH_SZ];   /* standalone executable path     */
+    char     preview[PLUGIN_PATH_SZ];/* resolved preview file path     */
     Manifest man;                    /* zeroed when absent             */
     int      has_man;
+    app_entry_t entry;               /* kind=exe drawer entry          */
 } LoadedApp;
 
 static LoadedApp s_apps[PLUGIN_LOAD_MAX];
 static int s_n_apps;
 static char s_dir[PLUGIN_PATH_SZ];      /* plugin root dir                */
 static char s_cur_dir[PLUGIN_PATH_SZ];  /* plugin_init() context          */
-static long s_dir_mtime;
+static uint32_t s_dir_sig;      /* hash of names + mtimes + sizes */
 static lv_timer_t *s_watch;
 
 /* ---------- small string helpers ---------- */
@@ -89,6 +95,8 @@ static void manifest_set(Manifest *m, char *key, char *val)
     else if (!strcmp(key, "icon"))     snprintf(m->icon, sizeof m->icon, "%s", val);
     else if (!strcmp(key, "info"))     unescape_nl(m->info, sizeof m->info, val);
     else if (!strcmp(key, "data"))     unescape_nl(m->data, sizeof m->data, val);
+    else if (!strcmp(key, "kind"))     snprintf(m->kind, sizeof m->kind, "%s", val);
+    else if (!strcmp(key, "preview"))  snprintf(m->preview, sizeof m->preview, "%s", val);
     else if (!strcmp(key, "abi"))      m->abi = atoi(val);
 }
 
@@ -107,6 +115,7 @@ static int manifest_read(const char *path, Manifest *m)
     memset(m, 0, sizeof *m);
     m->abi = -1;
     snprintf(m->exec, sizeof m->exec, "app.so");
+    snprintf(m->kind, sizeof m->kind, "plugin");
 
     for (char *p = buf; p && *p;) {
         char *nl = strchr(p, '\n');
@@ -305,6 +314,61 @@ static int load_packaged(const char *dirpath, const char *name, int reload)
     snprintf(slot->dir, sizeof slot->dir, "%s", dirpath);
     slot->man = man;
     slot->has_man = 1;
+    snprintf(slot->exec, sizeof slot->exec, "%s", spath);
+
+    /*
+     * kind=exe: the package ships a standalone executable. The host
+     * does not dlopen it - the drawer entry carries its path and the
+     * main loop forks/execs it, so the app runs as its own process
+     * (and can also be started from a shell).
+     */
+    if (!strcmp(man.kind, "exe")) {
+        const lv_img_dsc_t *icon;
+
+        if (man.abi >= 0 && man.abi != PLUGIN_ABI_VERSION) {
+            LOG_W("plugin: \"%s\" manifest ABI %d, host expects %u - "
+                  "skipped", man.name, man.abi, (unsigned)PLUGIN_ABI_VERSION);
+            memset(slot, 0, sizeof *slot);
+            return 0;
+        }
+        if (access(slot->exec, X_OK) != 0)
+            chmod(slot->exec, 0755);
+        if (access(slot->exec, X_OK) != 0) {
+            LOG_W("plugin: \"%s\" executable %s is not runnable, skipped",
+                  man.name, slot->exec);
+            memset(slot, 0, sizeof *slot);
+            return 0;
+        }
+        if (!man.label[0] && !man.name[0]) {
+            LOG_W("plugin: %s manifest misses name/label, skipped", dirpath);
+            memset(slot, 0, sizeof *slot);
+            return 0;
+        }
+
+        icon = icon_load(dirpath, man.icon);
+        memset(&slot->entry, 0, sizeof slot->entry);
+        slot->entry.name  = slot->man.label[0] ? slot->man.label
+                                               : slot->man.name;
+        slot->entry.img   = icon;
+        slot->entry.info  = slot->man.info[0] ? slot->man.info : NULL;
+        slot->entry.data  = slot->man.data[0] ? slot->man.data : NULL;
+        slot->entry.exec  = slot->exec;
+        if (slot->man.preview[0]) {
+            snprintf(slot->preview, sizeof slot->preview, "%s/%s",
+                     dirpath, slot->man.preview);
+            slot->entry.preview = slot->preview;
+        }
+        if (app_registry_add(&slot->entry) < 0) {
+            LOG_W("plugin: \"%s\" drawer entry rejected (name in use)",
+                  man.name);
+            memset(slot, 0, sizeof *slot);
+            return 0;
+        }
+        LOG_I("plugin: \"%s\" %s ready (standalone %s)",
+              man.name, man.version, slot->exec);
+        s_n_apps++;
+        return 1;
+    }
 
     if (app_load(spath, slot) != 0) {
         memset(slot, 0, sizeof *slot);
@@ -385,15 +449,59 @@ static int plugin_scan(int reload)
     return added;
 }
 
-/* 1 Hz watcher: a new/removed app package changes the directory mtime. */
+/*
+ * Directory signature: FNV-1a over each entry's name, mtime and size.
+ *
+ * The directory mtime alone is not enough - it has a one-second
+ * granularity, and an install extracts into <name>.tmp and then renames
+ * it, which can touch the directory twice inside the same second. The
+ * signature also covers the case where a package is replaced in place
+ * (same name, new file sizes). It is stable while nothing changes, so a
+ * package that fails to load is not retried every second.
+ */
+static uint32_t dir_sig(void)
+{
+    DIR *dp = opendir(s_dir);
+    struct dirent *ent;
+    uint32_t h = 2166136261u;
+
+    if (!dp)
+        return 0;
+    while ((ent = readdir(dp)) != NULL) {
+        struct stat st;
+        char path[PLUGIN_PATH_SZ];
+        unsigned long long v;
+
+        if (ent->d_name[0] == '.')
+            continue;
+        snprintf(path, sizeof path, "%s/%s", s_dir, ent->d_name);
+        if (stat(path, &st) != 0)
+            continue;
+        v = (unsigned long long)st.st_mtime * 1000003ull +
+            (unsigned long long)st.st_size;
+        for (const char *c = ent->d_name; *c; c++) {
+            h ^= (uint8_t)*c;
+            h *= 16777619u;
+        }
+        for (int i = 0; i < 8; i++) {
+            h ^= (uint8_t)(v >> (i * 8));
+            h *= 16777619u;
+        }
+    }
+    closedir(dp);
+    return h;
+}
+
+/* 1 Hz hot-install watcher: rescan when the directory signature moved. */
 static void watch_cb(lv_timer_t *timer)
 {
-    struct stat st;
+    uint32_t sig;
 
     (void)timer;
-    if (stat(s_dir, &st) != 0 || st.st_mtime == s_dir_mtime)
+    sig = dir_sig();
+    if (sig == s_dir_sig)
         return;
-    s_dir_mtime = st.st_mtime;
+    s_dir_sig = sig;
     if (plugin_scan(1) > 0) {
         LOG_I("plugin: hot-installed app(s) detected, drawer refreshed");
         app_drawer_refresh();
@@ -413,8 +521,8 @@ void plugin_manager_init(void)
     ok = plugin_scan(0);
     LOG_I("plugin: %d app(s) loaded from %s", ok, s_dir);
 
-    if (stat(s_dir, &st) == 0)
-        s_dir_mtime = st.st_mtime;
+    (void)st;
+    s_dir_sig = dir_sig();
     if (!s_watch)
         s_watch = lv_timer_create(watch_cb, 1000, NULL);
 }

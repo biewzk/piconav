@@ -3,6 +3,7 @@
 #include "../Config/app_config.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 LV_FONT_DECLARE(lv_font_app_16);
@@ -110,18 +111,45 @@ static void styles_init(void)
  * plugins: plugin_init), so the drawer knows nothing about trip or
  * GPS semantics.
  */
+/* Read the preview file a standalone app publishes (fixed format: a
+ * few ASCII lines, see app_runtime.h). Missing/empty file keeps the
+ * static manifest text. */
+static void preview_read(const char *path, char *buf, size_t cap)
+{
+    FILE *f = fopen(path, "rb");
+    size_t n;
+
+    if (!f)
+        return;
+    n = fread(buf, 1, cap - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+        buf[--n] = 0;
+    if (!buf[0])
+        buf[0] = 0;
+}
+
 static void data_refresh(void)
 {
     char buf[64];
+    char pbuf[96];
 
     for (int i = 0; i < s_count && i < MAX_ITEMS; i++) {
         const app_entry_t *app = app_registry_get(i);
 
-        if (!app || !app->data_get)
+        if (!app)
             continue;
-        buf[0] = '\0';
-        app->data_get(buf, sizeof(buf));
-        lv_label_set_text(s_data[i], buf);
+        if (app->data_get) {
+            buf[0] = '\0';
+            app->data_get(buf, sizeof(buf));
+            lv_label_set_text(s_data[i], buf);
+        } else if (app->preview) {
+            pbuf[0] = '\0';
+            preview_read(app->preview, pbuf, sizeof(pbuf));
+            if (pbuf[0])
+                lv_label_set_text(s_data[i], pbuf);
+        }
     }
 }
 
@@ -287,6 +315,11 @@ void app_drawer_refresh(void)
         s_count = MAX_ITEMS;
     for (int i = 0; i < s_count; i++)
         item_build(i, app_registry_get(i));
+
+    /* Fresh children have no layout yet: without this, get_y() below
+     * returns stale/zero positions and the list stays scrolled to the
+     * top instead of centering the selected item. */
+    lv_obj_update_layout(s_root);
 
     if (s_sel >= s_count)
         s_sel = s_count > 0 ? s_count - 1 : 0;

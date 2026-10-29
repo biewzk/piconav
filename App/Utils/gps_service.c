@@ -267,3 +267,17 @@ void gps_service_init(msg_center_t *mc)
     LOG_I("gps service: started (%s, interval %u ms)",
           mode_name(), (unsigned)s_interval_ms);
 }
+
+void gps_service_suspend(void)
+{
+    hal_gps_suspend();
+    LOG_I("gps service: suspended (UART released)");
+}
+
+void gps_service_resume(void)
+{
+    hal_gps_resume();
+    if (s_sampler)
+        sampler_force_sample(s_sampler);
+    LOG_I("gps service: resumed");
+}

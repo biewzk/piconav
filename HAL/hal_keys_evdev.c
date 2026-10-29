@@ -106,7 +106,6 @@ int hal_key_read(key_event_t *ev)
 {
     if (s_fd < 0)
         return 0;
-
     struct input_event ie;
     ssize_t n = read(s_fd, &ie, sizeof(ie));
     if (n != (ssize_t)sizeof(ie))
@@ -123,4 +122,25 @@ int hal_key_read(key_event_t *ev)
     ev->is_press = (ie.value != 0) ? 1 : 0;   /* value: 0=release, 1=press, 2=autorepeat */
     ev->is_long  = 0;                         /* long-press is a page_manager gesture */
     return 1;
+}
+/* Close the key device (hardware hand-off before launching a child). */
+void hal_key_shutdown(void)
+{
+    if (s_fd >= 0) {
+        close(s_fd);
+        s_fd = -1;
+        s_opened = 0;
+    }
+}
+
+/* Drain events queued while the device was open (e.g. keys pressed in
+ * the app that just exited): drop them so the GUI does not replay them. */
+void hal_key_flush(void)
+{
+    struct input_event ie;
+
+    if (s_fd < 0)
+        return;
+    while (read(s_fd, &ie, sizeof(ie)) == (ssize_t)sizeof(ie))
+        ;
 }

@@ -2,19 +2,18 @@
 #define APP_H
 
 #include "Utils/msg_center.h"
+#include "Utils/app_services.h"
 #include "../HAL/hal.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Global message center, created by app_init(). */
-msg_center_t *app_msg_center(void);
-
-/* GPS data pool (refreshed by gps_service at the configured sample
- * interval; consumers read it on_show to show data before the next
- * pool refresh). */
-const gps_data_t *app_gps(void);
+/*
+ * Launcher-side application framework (demo). Required accessors
+ * (app_msg_center/app_gps) live in Utils/app_services.h so the same
+ * page code builds into standalone app executables too.
+ */
 
 /*
  * Initialize the application framework: message center,

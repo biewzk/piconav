@@ -141,3 +141,7 @@ int hal_key_read(key_event_t *ev)
     /* Mouse events may have queued synthesized keys */
     return q_pop(ev);
 }
+
+/* Simulator: no hardware hand-off needed (single process owns SDL). */
+void hal_key_shutdown(void) {}
+void hal_key_flush(void) {}

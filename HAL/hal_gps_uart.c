@@ -176,3 +176,16 @@ int hal_gps_read(gps_data_t *out)
     *out = s_parser.data;
     return 1;
 }
+
+/* Release the UART (hardware hand-off before launching a child app that
+ * wants the receiver for itself). */
+void hal_gps_suspend(void)
+{
+    gps_close();
+}
+
+/* Re-acquire: the next hal_gps_read() reopens the port immediately. */
+void hal_gps_resume(void)
+{
+    s_next_open_ms = 0;
+}

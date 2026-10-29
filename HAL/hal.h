@@ -76,12 +76,24 @@ int  hal_should_quit(void);                  /* always 0 on device; 1 when sim w
 int  hal_key_init(void);
 int  hal_key_read(key_event_t *ev);          /* returns 1 = event available */
 
+/* Hardware hand-off for standalone apps: the launcher closes the key
+ * device before forking a child (so both processes do not consume the
+ * same evdev queue) and reopens + flushes it when the child exits. */
+void hal_key_shutdown(void);
+void hal_key_flush(void);                    /* drop queued events */
+
 /* GPS: device reads NMEA from the UART, simulator replays a .nmea file.
  * hal_gps_init() never blocks and never aborts the app on failure (the
  * device just keeps retrying); hal_gps_read() returns 1 when a fresh
  * snapshot is available, 0 when nothing changed. */
 int  hal_gps_init(void);
 int  hal_gps_read(gps_data_t *out);
+
+/* Release / re-acquire the receiver's UART so a standalone app can own
+ * it while the launcher GUI is suspended. hal_gps_read() reopens the
+ * port on its own after hal_gps_resume(). */
+void hal_gps_suspend(void);
+void hal_gps_resume(void);
 
 #ifdef __cplusplus
 }

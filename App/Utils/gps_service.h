@@ -88,6 +88,12 @@ void gps_service_demand_release(void);
  * users publish the same event). */
 void gps_service_config_reload(void);
 
+/* Hardware hand-off for standalone apps: suspend() closes the receiver
+ * UART so a child process can open it, resume() re-acquires it and
+ * forces a fresh sample so consumers do not show stale data. */
+void gps_service_suspend(void);
+void gps_service_resume(void);
+
 #ifdef __cplusplus
 }
 #endif

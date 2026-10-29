@@ -1,6 +1,7 @@
 #include "page_home.h"
 #include "page_app_drawer.h"
 #include "app_registry.h"
+#include "../Utils/app_launcher.h"
 #include "../Config/app_config.h"
 #include "../Utils/log.h"
 
@@ -337,8 +338,13 @@ static void home_on_key(page_t *self, const key_event_t *ev)
          * long-ENTER "back" gesture sit above home in the stack). */
         if (!ev->is_long && d->cur == PANEL_APP_DRAWER) {
             app_entry_t *app = app_registry_get(app_drawer_get_sel());
-            if (app && app->page)
+            if (app && app->exec) {
+                /* standalone app: the main loop forks/execs it and
+                 * suspends the GUI until it exits */
+                app_launcher_request(app->exec);
+            } else if (app && app->page) {
                 page_manager_push(app->page);
+            }
         }
         break;
     default:

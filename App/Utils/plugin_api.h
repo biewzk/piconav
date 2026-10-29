@@ -49,8 +49,12 @@ const char *app_plugin_dir(void);
  * the host no longer exports the app_icon_{gps,map,stopwatch}_img
  * tiles (each app now ships its own icon resource declared in
  * manifest.txt), added app_plugin_dir() for package resources, and the
- * host builds drawer entries from the package manifest. */
-#define PLUGIN_ABI_VERSION 4
+ * host builds drawer entries from the package manifest; 5 - app_entry_t
+ * gained the exec field: packaged apps with kind=exe ship their own
+ * executable and run as a child process instead of a .so plugin; 6 -
+ * app_entry_t gained the preview field (standalone apps publish their
+ * drawer white column through a preview file). */
+#define PLUGIN_ABI_VERSION 6
 
 #ifdef __cplusplus
 }
