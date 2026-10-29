@@ -29,4 +29,11 @@ int app_launcher_pending(void);
 /* Service the pending request: suspend, fork/exec, wait, resume. */
 void app_launcher_run(void);
 
+/* Hardware hand-off (used by the launcher and by the display guard when
+ * a program started outside the GUI takes the screen): release the key
+ * device + GPS UART while another process owns the display, then
+ * re-acquire them and repaint the whole UI. */
+void app_launcher_suspend_hw(void);
+void app_launcher_resume_hw(void);
+
 #endif /* APP_LAUNCHER_H */

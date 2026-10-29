@@ -29,6 +29,23 @@ int app_launcher_pending(void)
     return s_pending[0] != 0;
 }
 
+void app_launcher_suspend_hw(void)
+{
+    gps_service_suspend();
+    hal_key_shutdown();
+}
+
+void app_launcher_resume_hw(void)
+{
+    hal_key_init();
+    hal_key_flush();
+    gps_service_resume();
+
+    /* whoever owned the screen drew over it directly: force a repaint */
+    lv_obj_invalidate(lv_scr_act());
+    lv_refr_now(NULL);
+}
+
 /*
  * Service one launch request. Runs in the main loop, never inside an
  * LVGL callback, so suspending the GUI here is safe: the LVGL timer
@@ -57,8 +74,7 @@ void app_launcher_run(void)
 
     /* Hand the hardware over: the child opens /dev/fb0, the key device
      * and (if it needs it) the GPS UART itself. */
-    gps_service_suspend();
-    hal_key_shutdown();
+    app_launcher_suspend_hw();
 
     pid = fork();
     if (pid == 0) {
@@ -79,12 +95,7 @@ void app_launcher_run(void)
 
     /* Re-acquire the hardware and repaint: the child scribbled the
      * framebuffer directly, our LVGL tree still holds the old frame. */
-    hal_key_init();
-    hal_key_flush();
-    gps_service_resume();
-
-    lv_obj_invalidate(lv_scr_act());
-    lv_refr_now(NULL);
+    app_launcher_resume_hw();
 
     LOG_I("launcher: GUI resumed");
 }

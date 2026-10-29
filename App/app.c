@@ -6,6 +6,7 @@
 #include "Utils/plugin_manager.h"
 #include "Utils/app_launcher.h"
 #include "Utils/app_services.h"
+#include "Utils/display_guard.h"
 #include "Utils/log.h"
 #include "Pages/pages_builtin.h"
 #include "Pages/page_app_drawer.h"
@@ -56,10 +57,45 @@ void app_init(void)
  */
 void app_run(void)
 {
+    int foreign_owner = 0;
+    /* hal_tick_get() is an absolute ms clock: starting the deadline at
+     * 0 would make (now - next) overflow int32 and never fire. */
+    uint32_t next_guard_ms = hal_tick_get();
+
     while (!hal_should_quit()) {
         if (app_launcher_pending()) {
             app_launcher_run();
             app_drawer_refresh();
+            continue;
+        }
+
+        /*
+         * Single-front-owner policy: if another process opened /dev/fb0
+         * (an app started from a serial console, a leftover child, ...)
+         * the GUI yields - no rendering, no key reads, UART released -
+         * instead of fighting it for the same framebuffer. It resumes
+         * as soon as that process closes the device.
+         */
+        /* 2 Hz is plenty for a human-scale screen hand-off and keeps
+         * the /proc scan off the hot path. */
+        if ((int32_t)(hal_tick_get() - next_guard_ms) >= 0) {
+            int owner;
+
+            next_guard_ms = hal_tick_get() + 500;
+            owner = display_guard_owner_pid();
+            if (owner != foreign_owner) {
+                if (owner) {
+                    LOG_I("display: owned by pid %d, GUI suspended", owner);
+                    app_launcher_suspend_hw();
+                } else {
+                    LOG_I("display: released, GUI resumed");
+                    app_launcher_resume_hw();
+                }
+                foreign_owner = owner;
+            }
+        }
+        if (foreign_owner) {
+            hal_delay_ms(200);
             continue;
         }
 
