@@ -59,7 +59,7 @@ static SDL_Keycode inject_name_to_key(const char *name)
  * "enter:800" holds ENTER for 800 ms and exercises the long-press
  * gesture). Consecutive tokens are spaced SIM_KEY_MS apart.
  */
-#define INJECT_MAX   64
+#define INJECT_MAX   256
 #define INJECT_T0_MS 300   /* settle time before the first key */
 
 typedef struct {
@@ -206,7 +206,7 @@ int main(int argc, char *argv[])
 
     const char *key = getenv("SIM_KEY");
     if (key) {
-        char buf[128];
+        char buf[512];          /* long key scripts (see AGENTS.md) */
         strncpy(buf, key, sizeof(buf) - 1);
         buf[sizeof(buf) - 1] = 0;
         uint32_t interval_ms = 400;
