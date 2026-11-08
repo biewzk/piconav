@@ -83,6 +83,10 @@ LIB_SRCS := $(filter-out App/Utils/plugin_manager.c, $(wildcard App/Utils/*.c)) 
             $(wildcard HAL/*.c) \
             $(wildcard third_party/cJSON/*.c)
 LIB_OBJS := $(addprefix $(BUILD_OBJ_DIR)/, $(LIB_SRCS:.c=.o)) $(COBJS)
+# the archive object list is wider than TARGET (App/runtime, App/Pages):
+# track header deps for those too, or a screen-size change in
+# App/Config/app_config.h silently keeps stale .o files in libpiconav.a
+-include $(LIB_OBJS:.o=.d)
 
 lib: $(LIB)
 

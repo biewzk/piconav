@@ -1,6 +1,6 @@
 # AGENTS.md
 
-C firmware project: LVGL v8.1.0 GPS odometer/nav GUI (240x320 RGB565) for an ARM board, with an SDL2 PC simulator built from shared sources. Detailed architecture docs live in `README.md` and `Doc/` (Chinese) — consult those for page/map-renderer internals.
+C firmware project: LVGL v8.1.0 GPS odometer/nav GUI (320x480 RGB565, ST7796 panel) for an ARM board, with an SDL2 PC simulator built from shared sources. Detailed architecture docs live in `README.md` and `Doc/` (Chinese) — consult those for page/map-renderer internals.
 
 ## Builds (two independent Makefiles)
 

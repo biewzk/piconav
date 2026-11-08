@@ -1,9 +1,9 @@
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
-/* Screen resolution (ST7789V 2.4", portrait) */
-#define APP_SCR_HOR    240
-#define APP_SCR_VER    320
+/* Screen resolution (ST7796S 3.5", portrait) */
+#define APP_SCR_HOR    320
+#define APP_SCR_VER    480
 
 /* Directory scanned by the map picker for .map files (data partition).
  * Override at runtime with the MF_MAP_DIR environment variable. */

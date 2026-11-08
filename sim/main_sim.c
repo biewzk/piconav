@@ -12,9 +12,9 @@
 #include "../App/Utils/page_manager.h"
 #include "../HAL/hal.h"
 
-#define SIM_SCALE 2   /* 240x320 -> 480x640 window */
-#define SIM_HOR    240
-#define SIM_VER    320
+#define SIM_SCALE 2   /* 320x480 -> 640x960 window */
+#define SIM_HOR    320
+#define SIM_VER    480
 
 static SDL_Window   *s_win;
 static SDL_Renderer *s_renderer;
@@ -203,6 +203,12 @@ int main(int argc, char *argv[])
 
     app_init();
     LOG_I("app_init done, entering main loop");
+
+    /* Headless/test hook: open a page by name right away (e.g. a plugin
+     * page that has no drawer entry in the sim). */
+    const char *start_page = getenv("SIM_PAGE");
+    if (start_page && *start_page)
+        page_manager_open(start_page, NULL);
 
     const char *key = getenv("SIM_KEY");
     if (key) {

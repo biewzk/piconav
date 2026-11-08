@@ -1,6 +1,7 @@
 #include "status_bar.h"
 #include "gps_service.h"
 #include "../app.h"
+#include "../Config/app_config.h"
 #include "../../HAL/hal.h"
 
 #include <stdio.h>
@@ -100,7 +101,7 @@ lv_obj_t *status_bar_create(lv_obj_t *parent)
     if (!sb)
         return NULL;
 
-    lv_obj_t *bar = sb_rect(parent, 0, 0, 240, STATUS_BAR_HEIGHT, COL_BG);
+    lv_obj_t *bar = sb_rect(parent, 0, 0, APP_SCR_HOR, STATUS_BAR_HEIGHT, COL_BG);
 
     /* Clock (device local time, like a phone) */
     sb->time_label = lv_label_create(bar);
@@ -109,10 +110,10 @@ lv_obj_t *status_bar_create(lv_obj_t *parent)
     lv_obj_set_style_text_color(sb->time_label, lv_color_hex(COL_TEXT), 0);
     lv_obj_set_pos(sb->time_label, 8, 4);
 
-    /* GPS signal bars, bottom-aligned on the text line */
+    /* GPS signal bars, bottom-aligned on the text line (right edge) */
     static const uint8_t hs[4] = {4, 6, 8, 10};
     for (int i = 0; i < 4; i++) {
-        sb->sig[i] = sb_rect(bar, 196 + i * 4, 16 - hs[i], 3, hs[i], COL_DIM);
+        sb->sig[i] = sb_rect(bar, APP_SCR_HOR - 44 + i * 4, 16 - hs[i], 3, hs[i], COL_DIM);
         lv_obj_set_style_radius(sb->sig[i], 1, 0);
     }
 
@@ -120,7 +121,7 @@ lv_obj_t *status_bar_create(lv_obj_t *parent)
      * a level gauge once battery hardware exists) */
     lv_obj_t *batt = lv_obj_create(bar);
     lv_obj_set_size(batt, 13, 8);
-    lv_obj_set_pos(batt, 218, 7);
+    lv_obj_set_pos(batt, APP_SCR_HOR - 22, 7);
     lv_obj_clear_flag(batt, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_opa(batt, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_color(batt, lv_color_hex(COL_MUTE), 0);
@@ -128,11 +129,11 @@ lv_obj_t *status_bar_create(lv_obj_t *parent)
     lv_obj_set_style_radius(batt, 2, 0);
     lv_obj_set_style_pad_all(batt, 0, 0);
 
-    sb_rect(bar, 231, 10, 2, 3, COL_MUTE);
+    sb_rect(bar, APP_SCR_HOR - 9, 10, 2, 3, COL_MUTE);
 
     lv_obj_t *bolt = lv_line_create(bar);
     lv_line_set_points(bolt, s_bolt_pts, 4);
-    lv_obj_set_pos(bolt, 223, 7);
+    lv_obj_set_pos(bolt, APP_SCR_HOR - 17, 7);
     lv_obj_set_style_line_color(bolt, lv_color_hex(COL_BOLT), 0);
     lv_obj_set_style_line_width(bolt, 1, 0);
 

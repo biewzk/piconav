@@ -161,21 +161,21 @@ static void build_watch_face(home_priv_t *d, lv_obj_t *parent)
     /* Date — will animate from top */
     d->date_label = lv_label_create(parent);
     lv_label_set_text(d->date_label, "---- -- --");
-    lv_obj_set_style_text_font(d->date_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(d->date_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(d->date_label, lv_color_hex(0xaaaaaa), 0);
-    lv_obj_align(d->date_label, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_align(d->date_label, LV_ALIGN_TOP_MID, 0, 40);
 
     /* Time — centered, main element */
     d->time_label = lv_label_create(parent);
     lv_label_set_text(d->time_label, "00:00:00");
-    lv_obj_set_style_text_font(d->time_label, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_font(d->time_label, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(d->time_label, lv_color_hex(0x00c2ff), 0);
-    lv_obj_align(d->time_label, LV_ALIGN_CENTER, 0, -20);
+    lv_obj_align(d->time_label, LV_ALIGN_CENTER, 0, -36);
 
     /* Title */
     d->title_label = lv_label_create(parent);
     lv_label_set_text(d->title_label, "Pico Nav");
-    lv_obj_set_style_text_font(d->title_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(d->title_label, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(d->title_label, lv_color_hex(0xffffff), 0);
     lv_obj_align(d->title_label, LV_ALIGN_CENTER, 0, 20);
 

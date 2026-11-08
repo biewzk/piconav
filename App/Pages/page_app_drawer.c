@@ -28,12 +28,12 @@ LV_FONT_DECLARE(lv_font_app_16);
  */
 
 #define ITEM_H        130
-#define ITEM_PAD      ((APP_SCR_VER - ITEM_H) / 2)   /* 95 */
-#define ITEM_W        220
-#define ICON_W_FULL   220    /* covers the data column of idle items */
-#define ICON_W_FOCUS  70     /* reveals info + data on the focused item */
-#define INFO_X        76
-#define DATA_X        150
+#define ITEM_PAD      ((APP_SCR_VER - ITEM_H) / 2)   /* 175 */
+#define ITEM_W        300
+#define ICON_W_FULL   300    /* covers the data column of idle items */
+#define ICON_W_FOCUS  90     /* reveals info + data on the focused item */
+#define INFO_X        96
+#define DATA_X        190
 
 #define ACCENT        0xff931e   /* X-TRACK focus edge */
 #define C_LIST_BG     0x000000
@@ -233,7 +233,7 @@ void app_drawer_create(lv_obj_t *parent)
     lv_obj_set_style_pad_ver(s_root, ITEM_PAD, 0);
     lv_obj_set_flex_flow(s_root, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_root, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_scrollbar_mode(s_root, LV_SCROLLBAR_MODE_OFF);
 
     s_count = app_registry_count();
